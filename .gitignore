@@ -1,0 +1,22 @@
+/target/
+/rust/target/
+/.venv/
+/.venv-ref/
+/.pytest_cache/
+/.local-lib/
+/__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+
+# Local-only behavioral oracle (ANCSA-1.0, not ours to redistribute).
+# See external/REFERENCE.md for how to reproduce the clone.
+/external/mofchecker_2_ref/
+
+# Regenerable parity outputs.
+/parity_atomic.json
+/parity_graph.json
+/parity_high_charges.json
+/parity_charge_oms.json
+/qmof_parity_report.json
+/.local-data/
