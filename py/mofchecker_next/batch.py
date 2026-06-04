@@ -112,8 +112,12 @@ def _has_high_charges_factory(structure):
     return fn
 
 
-# Default descriptor set. ``oms_indices`` (the explicit index list) and
-# ``has_high_charges`` (EQeq; GPL subpackage) are opt-in extras.
+# Default descriptor set: the full in-scope MOFChecker diagnostic suite,
+# including the (bit-exact) EQeq ``has_high_charges``. ``oms_indices`` (the
+# explicit OMS index list) is the only opt-in extra. Subset via ``descriptors=``
+# for speed -- e.g. drop ``has_oms`` (the most expensive check) or
+# ``has_high_charges`` (EQeq), or request only composition checks to skip the
+# graph build entirely.
 DEFAULT_DESCRIPTORS = (
     "has_carbon", "has_hydrogen", "has_nitrogen", "has_metal", "metal_number",
     "has_atomic_overlaps", "has_overcoordinated_c", "has_overcoordinated_n",
@@ -122,9 +126,10 @@ DEFAULT_DESCRIPTORS = (
     "has_lone_molecule", "has_3d_connected_graph", "has_suspicious_terminal_oxo",
     "has_geometrically_exposed_metal", "possible_charged_fused_ring",
     "positive_charge_from_linkers", "negative_charge_from_linkers", "has_oms",
+    "has_high_charges",
 )
 
-ALL_DESCRIPTORS = DEFAULT_DESCRIPTORS + ("oms_indices", "has_high_charges")
+ALL_DESCRIPTORS = DEFAULT_DESCRIPTORS + ("oms_indices",)
 
 # Descriptors that do not require the StructureGraph (so it is only built when
 # at least one graph-based descriptor is requested).

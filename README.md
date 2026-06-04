@@ -46,8 +46,9 @@ fast = check_structures(inputs, descriptors=["has_atomic_overlaps", "has_overcoo
 ```
 
 Each result is a dict with `index`, `id`, `n_atoms`, and the requested
-descriptors (`DEFAULT_DESCRIPTORS`; `ALL_DESCRIPTORS` also includes `oms_indices`
-and the EQeq `has_high_charges`). Failed structures get an `error` field
+descriptors. `DEFAULT_DESCRIPTORS` is the full in-scope suite, including the
+bit-exact EQeq `has_high_charges`; `ALL_DESCRIPTORS` additionally returns the
+explicit `oms_indices` list. Failed structures get an `error` field
 (`on_error="record"`) instead of aborting the batch.
 
 ## Layout
