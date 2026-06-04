@@ -22,6 +22,30 @@ the parity scripts under `scripts/`:
 Validation: 16/16 on the MOFChecker reference CIFs and 9000/9000
 descriptor-comparisons (500 QMOF structures x 18 descriptors) at 100%.
 
+## Drop-in `MOFChecker`
+
+A MOFChecker-compatible class exposes the same properties and
+`get_mof_descriptors` API, so existing code can switch over:
+
+```python
+from mofchecker_next import MOFChecker
+
+mc = MOFChecker.from_cif("structure.cif")     # also .from_ase(atoms) / MOFChecker(structure)
+mc.has_atomic_overlaps, mc.has_oms, mc.metal_number
+mc.graph_hash, mc.spacegroup_symbol
+descriptors = mc.get_mof_descriptors()        # OrderedDict of all descriptors
+```
+
+Implemented: all diagnostics (with `*_indices` accessors), composition, metadata
+(`formula`, `density`), symmetry (`spacegroup_symbol/number`, `symmetry_hash`),
+and graph hashes (`graph_hash`, `undecorated_graph_hash`, `scaffold_hash`,
+`undecorated_scaffold_hash`). The graph is built once and reused across checks.
+
+Differences from the reference: `adding_hydrogen`/`adding_linker` (healing) raise
+`NotImplementedError`; `is_porous` returns `None` (no bundled Zeo++);
+`symmetry_hash` is deterministic (the reference's depends on Python hash
+randomization and is not reproducible across runs).
+
 ## Batch validation
 
 `mofchecker_next.batch` runs the full diagnostic set over many structures
