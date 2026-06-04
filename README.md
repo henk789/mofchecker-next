@@ -22,6 +22,34 @@ the parity scripts under `scripts/`:
 Validation: 16/16 on the MOFChecker reference CIFs and 9000/9000
 descriptor-comparisons (500 QMOF structures x 18 descriptors) at 100%.
 
+## Batch validation
+
+`mofchecker_next.batch` runs the full diagnostic set over many structures
+efficiently — useful for validating generated structures (e.g. from a diffusion
+model). It accepts pymatgen `Structure`, ASE `Atoms`, or CIF paths (mixed),
+builds each structure's graph once, and parallelizes across structures with
+`multiprocessing`.
+
+```python
+from mofchecker_next.batch import check_structures, check_structure
+
+# inputs may be paths, pymatgen Structures, ASE Atoms, or a mix
+results = check_structures(inputs, n_workers=16)          # all CPUs by default
+overlapping = [r for r in results if r["has_atomic_overlaps"]]
+
+# one structure
+r = check_structure(atoms_or_structure_or_path)
+
+# pick a subset (dropping has_oms removes the most expensive check;
+# a composition-only subset skips graph construction entirely)
+fast = check_structures(inputs, descriptors=["has_atomic_overlaps", "has_overcoordinated_c"])
+```
+
+Each result is a dict with `index`, `id`, `n_atoms`, and the requested
+descriptors (`DEFAULT_DESCRIPTORS`; `ALL_DESCRIPTORS` also includes `oms_indices`
+and the EQeq `has_high_charges`). Failed structures get an `error` field
+(`on_error="record"`) instead of aborting the batch.
+
 ## Layout
 
 - `py/mofchecker_next/` — Python package (checks, diagnostics, the `eqeq` subpackage).

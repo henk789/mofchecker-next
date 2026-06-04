@@ -51,6 +51,15 @@ def build_structure_graph(structure, method: str = "vesta"):
     return get_structure_graph(structure, method)
 
 
+def _resolve_graph(structure, method, graph):
+    """Return a caller-supplied graph if given, else build one.
+
+    Lets the diagnostic helpers share a single StructureGraph (built once per
+    structure) instead of rebuilding it for every check.
+    """
+    return graph if graph is not None else build_structure_graph(structure, method)
+
+
 def structure_graph_edges_and_images(structure_graph):
     """Extract explicit edge endpoints and `to_jimage` vectors from a StructureGraph."""
     edges = []
@@ -69,16 +78,16 @@ def structure_graph_components_as_molecules(structure_graph):
     return indices
 
 
-def floating_solvent_indices_from_structure(structure, method: str = "vesta"):
+def floating_solvent_indices_from_structure(structure, method: str = "vesta", graph=None):
     """Return MOFChecker-compatible floating-solvent index lists."""
-    return structure_graph_components_as_molecules(build_structure_graph(structure, method))
+    return structure_graph_components_as_molecules(_resolve_graph(structure, method, graph))
 
 
-def is_3d_connected_graph_from_structure(structure, method: str = "vesta") -> bool:
+def is_3d_connected_graph_from_structure(structure, method: str = "vesta", graph=None) -> bool:
     """Match MOFChecker 2.0's 3D connected graph descriptor."""
     from pymatgen.analysis.dimensionality import get_dimensionality_larsen
 
-    return bool(get_dimensionality_larsen(build_structure_graph(structure, method)) == 3)
+    return bool(get_dimensionality_larsen(_resolve_graph(structure, method, graph)) == 3)
 
 
 def connected_components_py(n_atoms: int, edges):
@@ -311,8 +320,8 @@ def check_nonperiodic_components(n_atoms: int, edges, edge_images=None) -> list[
     return diagnostics
 
 
-def overcoordinated_carbon_indices_from_structure(structure, metal_symbols, method: str = "vesta"):
-    graph = build_structure_graph(structure, method)
+def overcoordinated_carbon_indices_from_structure(structure, metal_symbols, method: str = "vesta", graph=None):
+    graph = _resolve_graph(structure, method, graph)
     edges, _ = structure_graph_edges_and_images(graph)
     atomic_numbers = [int(site.specie.Z) for site in graph.structure]
     excluded = {5}
@@ -320,8 +329,8 @@ def overcoordinated_carbon_indices_from_structure(structure, metal_symbols, meth
     return overcoordinated_indices_by_degree(atomic_numbers, edges, 6, 4, excluded)
 
 
-def overcoordinated_nitrogen_indices_from_structure(structure, metal_symbols, method: str = "vesta"):
-    graph = build_structure_graph(structure, method)
+def overcoordinated_nitrogen_indices_from_structure(structure, metal_symbols, method: str = "vesta", graph=None):
+    graph = _resolve_graph(structure, method, graph)
     edges, _ = structure_graph_edges_and_images(graph)
     atomic_numbers = [int(site.specie.Z) for site in graph.structure]
     excluded = {int(site.specie.Z) for site in graph.structure if str(site.specie) in set(metal_symbols)}
@@ -333,9 +342,10 @@ def false_oxo_indices_from_structure(
     metal_symbols,
     method: str = "vesta",
     no_terminal_oxo_symbols=NO_TERMINAL_OXO_SYMBOLS,
+    graph=None,
 ) -> list[int]:
     """Return terminal oxo indices disallowed by MOFChecker 2.0's element list."""
-    graph = build_structure_graph(structure, method)
+    graph = _resolve_graph(structure, method, graph)
     metal_symbols = {str(symbol) for symbol in metal_symbols}
     no_terminal_oxo_symbols = {str(symbol) for symbol in no_terminal_oxo_symbols}
 
@@ -348,8 +358,9 @@ def geometrically_exposed_metal_indices_from_structure(
     structure,
     metal_symbols,
     method: str = "vesta",
+    graph=None,
 ) -> list[int]:
-    graph = build_structure_graph(structure, method)
+    graph = _resolve_graph(structure, method, graph)
     return geometrically_exposed_metal_indices_from_graph(graph, metal_symbols)
 
 
@@ -359,13 +370,14 @@ def undercoordinated_carbon_indices_from_structure(
     covalent_radii_by_symbol,
     method: str = "vesta",
     tolerance: float = 165.0,
+    graph=None,
 ) -> list[int]:
     """Return undercoordinated carbon indices following MOFChecker 2.0 index logic.
 
     This intentionally matches only flagged indices. MOFChecker's candidate H
     positions are correction/healing scaffolding and are outside current scope.
     """
-    graph = build_structure_graph(structure, method)
+    graph = _resolve_graph(structure, method, graph)
     c_indices = [index for index, site in enumerate(structure) if str(site.specie) == "C"]
     n_indices = {index for index, site in enumerate(structure) if str(site.specie) == "N"}
     metal_symbols = {str(symbol) for symbol in metal_symbols}
@@ -405,6 +417,7 @@ def undercoordinated_nitrogen_indices_from_structure(
     structure,
     metal_symbols,
     method: str = "vesta",
+    graph=None,
 ) -> list[int]:
     """Return undercoordinated nitrogen indices following MOFChecker 2.0 index logic.
 
@@ -412,7 +425,7 @@ def undercoordinated_nitrogen_indices_from_structure(
     not flagged nitrogen indices. This helper preserves that reference-visible
     behavior and returns indices from the CN-minus-metal-equals-1 branch.
     """
-    graph = build_structure_graph(structure, method)
+    graph = _resolve_graph(structure, method, graph)
     metal_symbols = {str(symbol) for symbol in metal_symbols}
     n_indices = [index for index, site in enumerate(structure) if str(site.specie) == "N"]
     flagged = []
@@ -434,14 +447,14 @@ def undercoordinated_nitrogen_indices_from_structure(
     return flagged
 
 
-def undercoordinated_rare_earth_indices_from_structure(structure, method: str = "vesta") -> list[int]:
-    graph = build_structure_graph(structure, method)
+def undercoordinated_rare_earth_indices_from_structure(structure, method: str = "vesta", graph=None) -> list[int]:
+    graph = _resolve_graph(structure, method, graph)
     degrees = node_degrees_from_edges(len(structure), structure_graph_edges_and_images(graph)[0])
     return [index for index, site in enumerate(structure) if site.specie.is_rare_earth and degrees[index] < 4]
 
 
-def undercoordinated_alkali_alkaline_indices_from_structure(structure, method: str = "vesta") -> list[int]:
-    graph = build_structure_graph(structure, method)
+def undercoordinated_alkali_alkaline_indices_from_structure(structure, method: str = "vesta", graph=None) -> list[int]:
+    graph = _resolve_graph(structure, method, graph)
     degrees = node_degrees_from_edges(len(structure), structure_graph_edges_and_images(graph)[0])
     return [
         index
