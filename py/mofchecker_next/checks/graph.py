@@ -46,9 +46,21 @@ NO_TERMINAL_OXO_SYMBOLS = {
 
 def build_structure_graph(structure, method: str = "vesta"):
     """Build a StructureGraph using the MOFChecker 2.0 graph helper."""
+    import warnings
+
     from structuregraph_helpers.create import get_structure_graph
 
-    return get_structure_graph(structure, method)
+    with warnings.catch_warnings():
+        # structuregraph_helpers calls pymatgen's deprecated
+        # StructureGraph.with_local_env_strategy. The call is correct; only the
+        # method name is deprecated. Silence that one notice (scoped by message)
+        # so it doesn't spam batch runs, without hiding other warnings.
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*with_local_env_strategy is deprecated.*",
+            category=FutureWarning,
+        )
+        return get_structure_graph(structure, method)
 
 
 def _resolve_graph(structure, method, graph):

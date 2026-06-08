@@ -27,6 +27,26 @@ VDW_H_RADIUS = 1.1
 COVALENT_MEDIAN = 1.49
 
 
+def _structure_from_file(path):
+    """``Structure.from_file`` with pymatgen's benign CIF-rounding notice muted.
+
+    pymatgen's CifParser warns whenever it snaps near-integer fractional
+    coordinates to ideal values -- common for model-generated CIFs and harmless
+    for the diagnostics. Scoped by message so genuine parse warnings still show.
+    """
+    import warnings
+
+    from pymatgen.core import Structure
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*(fractional coordinates rounded to ideal values"
+            r"|Issues encountered while parsing CIF).*",
+        )
+        return Structure.from_file(str(path))
+
+
 def normalize_structure(obj):
     """Coerce a pymatgen Structure, ASE Atoms, or CIF path into a Structure."""
     from pymatgen.core import IStructure, Structure
@@ -34,7 +54,7 @@ def normalize_structure(obj):
     if isinstance(obj, (Structure, IStructure)):
         return obj
     if isinstance(obj, (str, Path)):
-        return Structure.from_file(str(obj))
+        return _structure_from_file(obj)
     if hasattr(obj, "get_chemical_symbols") and hasattr(obj, "get_positions"):
         from pymatgen.io.ase import AseAtomsAdaptor
 
@@ -76,10 +96,8 @@ class MOFChecker:
     @classmethod
     def from_cif(cls, path, **kwargs):
         """Build from a CIF path (loaded with pymatgen ``Structure.from_file``)."""
-        from pymatgen.core import Structure
-
         path = str(path)
-        return cls(Structure.from_file(path), name=Path(path).stem, path=str(Path(path).resolve()), **kwargs)
+        return cls(_structure_from_file(path), name=Path(path).stem, path=str(Path(path).resolve()), **kwargs)
 
     @classmethod
     def from_ase(cls, atoms, **kwargs):
