@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "mofchecker-next contributors" }]
-dependencies = ["numpy>=1.26", "structuregraph-helpers>=0.0.9", "element-coder>=0.0.8", "libconeangle>=0.1.2"]
+dependencies = ["numpy>=1.26", "structuregraph-helpers>=0.0.9", "element-coder>=0.0.8", "libconeangle>=0.1.2", "rustworkx>=0.14"]
 
 [project.optional-dependencies]
 test = ["pytest>=8", "maturin>=1.7,<2"]

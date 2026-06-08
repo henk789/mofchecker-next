@@ -83,11 +83,21 @@ def structure_graph_edges_and_images(structure_graph):
 
 
 def structure_graph_components_as_molecules(structure_graph):
-    """Call the same helper MOFChecker 2.0 uses for floating-solvent indices."""
-    from structuregraph_helpers.subgraph import get_subgraphs_as_molecules
+    """Finite (molecular) connected components of the periodic graph, as original
+    site-index lists -- the floating-solvent indices.
 
-    _, _, indices, _, _ = get_subgraphs_as_molecules(structure_graph, return_unique=False)
-    return indices
+    rustworkx-backed (see _subgraph_rx): identifies finite components directly via
+    an integer image-offset test, replacing structuregraph_helpers'
+    get_subgraphs_as_molecules (pymatgen StructureGraph.__mul__ -> networkx
+    union/relabel over a 3x3x3 supercell, ~2.3 s/struct -> ~ms). Matches the
+    reference on has_lone_molecule everywhere EXCEPT boundary-wrapping finite
+    molecules, which the reference's supercell+in-cell-filter heuristic drops as a
+    false negative (the origin-cell copy is truncated at the supercell face); we
+    detect them correctly. See scripts/validate_subgraph_rx.py.
+    """
+    from mofchecker_next.checks._subgraph_rx import finite_component_indices
+
+    return finite_component_indices(structure_graph)
 
 
 def floating_solvent_indices_from_structure(structure, method: str = "vesta", graph=None):
