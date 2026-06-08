@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/henk789/mofchecker-rs"
+Repository = "https://github.com/henk789/mofchecker-next"
 
 [project.optional-dependencies]
 test = ["pytest>=8", "maturin>=1.7,<2"]

@@ -2,7 +2,7 @@
 #
 # Publishing uses PyPI Trusted Publishing (OIDC) -- no API token is stored.
 # One-time setup on pypi.org -> the project -> Publishing -> add a trusted
-# publisher: owner=henk789, repo=mofchecker-rs, workflow=release.yml,
+# publisher: owner=henk789, repo=mofchecker-next, workflow=release.yml,
 # environment=pypi. Then release with:  git tag v0.1.0 && git push origin v0.1.0
 #
 # abi3 (pyo3/abi3-py310) means one wheel per platform covers Python 3.10+.
