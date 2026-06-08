@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "mofchecker-next"
-version = "0.1.0"
+version = "0.1.1"
 description = "Incremental Rust/Python geometry kernels for MOF checking"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,8 +34,10 @@ manifest-path = "rust/Cargo.toml"
 python-source = "py"
 module-name = "mofchecker_next._rust"
 features = ["pyo3/abi3-py310", "pyo3/extension-module"]
-# Ship the EQeq ionization/charge-center tables (GPL) used by the eqeq subpackage.
+# Ship the license files (declared as License-File in metadata -> must exist in
+# the sdist) and the EQeq ionization/charge-center tables (GPL) used by eqeq.
 include = [
+    "LICENSE",
     "py/mofchecker_next/eqeq/data/ionizationdata.dat",
     "py/mofchecker_next/eqeq/data/chargecenters.dat",
     "py/mofchecker_next/eqeq/LICENSE",
