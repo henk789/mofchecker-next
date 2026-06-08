@@ -21,7 +21,9 @@ import time
 from multiprocessing import Pool
 from pathlib import Path
 
-QMOF_DIR = Path("/projects/p2/p_fm_mofs/adit-mof-repro/data/qmof/raw/relaxed_structures")
+# Directory of QMOF reference CIFs (CC BY 4.0; not redistributed here).
+# Set QMOF_DIR to your local checkout, e.g. the adit-mof-repro relaxed_structures.
+QMOF_DIR = Path(os.environ.get("QMOF_DIR", "qmof_cifs"))
 
 DESCRIPTORS = [
     "has_carbon", "has_hydrogen", "has_nitrogen", "has_metal", "metal_number",

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 import warnings
@@ -18,7 +19,8 @@ warnings.filterwarnings("ignore")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from qmof_parity import _repo_root  # noqa: E402
 
-QMOF_DIR = Path("/projects/p2/p_fm_mofs/adit-mof-repro/data/qmof/raw/relaxed_structures")
+# Set QMOF_DIR to a local QMOF reference CIF directory (not redistributed here).
+QMOF_DIR = Path(os.environ.get("QMOF_DIR", "qmof_cifs"))
 
 
 def _as_set(list_of_lists):
