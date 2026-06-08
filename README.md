@@ -14,16 +14,16 @@ descriptors = mc.get_mof_descriptors()        # OrderedDict of every diagnostic
 
 ---
 
-## Why use it
+## ✨ Why use it
 
 - ⚡ **Fast.** On 150-atom MOFs, **57.8 ms/structure** single-core vs **1.34 s** for MOFChecker 2.0 (**23×**); **149 structures/s** across 10 cores. The hot paths (floating solvent, 3D-connectivity) were ported off networkx; the numeric kernels (distances, contacts, connected components, EQeq) are Rust.
 - 🔌 **Drop-in.** `MOFChecker`-compatible class — same properties, same `get_mof_descriptors()`. Switch the import and existing code keeps working.
-- ✅ **Parity-verified.** 100% agreement with MOFChecker 2.0 on real QMOFs (4500/4500 descriptor-comparisons over 250 structures × 18 descriptors; 16/16 on the reference test CIFs). See [Parity](#parity).
+- ✅ **Parity-verified.** 100% agreement with MOFChecker 2.0 on real QMOFs (4500/4500 descriptor-comparisons over 250 structures × 18 descriptors; 16/16 on the reference test CIFs). See **Parity** below.
 - 📦 **Built for batches.** `mofchecker_next.batch` parallelizes across structures, builds each graph once, and never aborts the run on a single bad structure.
 - 🔋 **Bit-exact charges.** `has_high_charges` is a faithful Rust port of EQeq (bit-exact equilibrated charges).
 - 🔁 **Reproducible.** `symmetry_hash` is deterministic (the reference's depends on Python hash randomization).
 
-## Performance
+## ⚡ Performance
 
 120 generated 150-atom CIFs, full geometric descriptor set, MOFChecker 2.0 vs mofchecker-next on identical inputs (10-core node):
 
@@ -36,7 +36,7 @@ descriptors = mc.get_mof_descriptors()        # OrderedDict of every diagnostic
 
 Where the speedup comes from: MOFChecker's floating-solvent check builds a 3×3×3 supercell graph via pymatgen `StructureGraph.__mul__` (networkx `union`/`relabel` of 27 copies, ~2.3 s/structure), and 3D-connectivity runs Larsen dimensionality over networkx. Both are replaced by direct integer image-offset algorithms on a rustworkx graph — O(N+E), no supercell — while the geometry kernels run in Rust.
 
-## How it works
+## ⚙️ How it works
 
 Python owns CIF/structure loading, pymatgen integration, and orchestration. The heavy lifting is delegated:
 
@@ -46,7 +46,7 @@ Python owns CIF/structure loading, pymatgen integration, and orchestration. The 
 
 The structure graph is built once per `MOFChecker` and reused across all checks.
 
-## Batch validation
+## 📦 Batch validation
 
 ```python
 from mofchecker_next.batch import check_structures, check_structure
@@ -63,7 +63,7 @@ fast = check_structures(inputs, descriptors=["has_atomic_overlaps", "has_overcoo
 
 Each result is a dict with `index`, `id`, `n_atoms`, and the requested descriptors. `DEFAULT_DESCRIPTORS` is the in-scope diagnostic suite (including bit-exact `has_high_charges`); `ALL_DESCRIPTORS` adds metadata, symmetry, and graph hashes. A structure that fails gets an `error` field (`on_error="record"`) instead of aborting the batch.
 
-## Parity
+## ✅ Parity
 
 Verified against a MOFChecker 2.0 checkout (used only as a behavioral oracle) via the harnesses in `scripts/`:
 
@@ -73,7 +73,7 @@ Verified against a MOFChecker 2.0 checkout (used only as a behavioral oracle) vi
 
 Reproduce: `scripts/qmof_parity.py` (real QMOFs), `scripts/generated_parity.py` (generated CIFs), `scripts/validate_subgraph_rx.py` (floating-solvent port).
 
-## Limitations & deliberate differences
+## ⚠️ Limitations & deliberate differences
 
 - **Healing not implemented.** `adding_hydrogen` / `adding_linker` raise `NotImplementedError`.
 - **No porosity.** `is_porous` returns `None` (no bundled Zeo++).
@@ -81,7 +81,7 @@ Reproduce: `scripts/qmof_parity.py` (real QMOFs), `scripts/generated_parity.py` 
 - **Graph construction is still the floor.** pymatgen's VESTA neighbor-finding (via `structuregraph_helpers`) is unchanged; the speedup is in the graph *algorithms*, not bond perception.
 - **Determinism.** `symmetry_hash` is deterministic by design and will not match the reference's randomized value across runs.
 
-## Install / build
+## 🛠️ Install / build
 
 ```bash
 python -m maturin develop --release          # build the Rust extension into the venv
@@ -91,7 +91,7 @@ cargo test --release --manifest-path rust/Cargo.toml   # Rust tests
 
 Dependencies: `numpy`, `pymatgen` (loading + neighbor-finding), `structuregraph_helpers` (construction + hashes), `rustworkx`, `element-coder`, `libconeangle`.
 
-## Layout
+## 🗂️ Layout
 
 - `py/mofchecker_next/` — Python package (`checks/`, `diagnostics.py`, the `eqeq` subpackage).
 - `py/mofchecker_next/checks/_subgraph_rx.py` — rustworkx floating-solvent + dimensionality.
@@ -100,7 +100,7 @@ Dependencies: `numpy`, `pymatgen` (loading + neighbor-finding), `structuregraph_
 - `tests/` — Rust and Python unit tests.
 - `docs/DIAGNOSTIC_INVENTORY.md` — per-diagnostic parity status.
 
-## Licensing
+## ⚖️ Licensing
 
 **MIT** (see `LICENSE`), with one exception: `py/mofchecker_next/eqeq/` is a faithful translation of [EQeq](https://github.com/lsmo-epfl/EQeq) and vendors its data tables. EQeq is **GPLv2**, so that subpackage — and any distribution bundling it — is GPLv2 (`py/mofchecker_next/eqeq/LICENSE`). For an MIT-only build, omit the `eqeq` subpackage and the `has_high_charges` diagnostic.
 
