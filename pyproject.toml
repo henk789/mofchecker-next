@@ -8,18 +8,26 @@ version = "0.1.0"
 description = "Incremental Rust/Python geometry kernels for MOF checking"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
-authors = [{ name = "mofchecker-next contributors" }]
+# The distributed package bundles the GPLv2 `mofchecker_next.eqeq` subpackage
+# (a faithful EQeq translation), so the combined work is GPLv2. The non-eqeq
+# sources remain MIT (see LICENSE); for an MIT-only build, omit `eqeq` and the
+# `has_high_charges` diagnostic.
+license = { text = "GPL-2.0-only" }
+authors = [{ name = "Hendrik Kraß" }]
 dependencies = ["numpy>=1.26", "structuregraph-helpers>=0.0.9", "element-coder>=0.0.8", "libconeangle>=0.1.2", "rustworkx>=0.14"]
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+
+[project.urls]
+Repository = "https://github.com/henk789/mofchecker-rs"
 
 [project.optional-dependencies]
 test = ["pytest>=8", "maturin>=1.7,<2"]
 parity = ["pymatgen>=2024.8"]
-
-# NOTE: the core project is MIT, but the `mofchecker_next.eqeq` subpackage is a
-# faithful translation of EQeq (GPLv2) and vendors its data tables, so it is
-# GPL-licensed (see py/mofchecker_next/eqeq/LICENSE). Distributing the whole as a
-# combined work means the combination is governed by the GPL.
 
 [tool.maturin]
 manifest-path = "rust/Cargo.toml"

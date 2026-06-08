@@ -102,6 +102,6 @@ Dependencies: `numpy`, `pymatgen` (loading + neighbor-finding), `structuregraph_
 
 ## ⚖️ Licensing
 
-**MIT** (see `LICENSE`), with one exception: `py/mofchecker_next/eqeq/` is a faithful translation of [EQeq](https://github.com/lsmo-epfl/EQeq) and vendors its data tables. EQeq is **GPLv2**, so that subpackage — and any distribution bundling it — is GPLv2 (`py/mofchecker_next/eqeq/LICENSE`). For an MIT-only build, omit the `eqeq` subpackage and the `has_high_charges` diagnostic.
+The **published package is GPLv2**, because it bundles `py/mofchecker_next/eqeq/` — a faithful translation of [EQeq](https://github.com/lsmo-epfl/EQeq) (GPLv2, see `py/mofchecker_next/eqeq/LICENSE`) — and the GPL governs the combined work. The non-eqeq sources are **MIT** (`LICENSE`); for an MIT-only build, omit the `eqeq` subpackage and the `has_high_charges` diagnostic.
 
 The MOFChecker 2.0 checkout used as the behavioral oracle (ANCSA 1.0) is **not** redistributed; see `external/REFERENCE.md` to reproduce it locally.
