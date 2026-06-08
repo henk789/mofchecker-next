@@ -16,12 +16,12 @@ descriptors = mc.get_mof_descriptors()        # OrderedDict of every diagnostic
 
 ## Why use it
 
-- **Fast.** On 150-atom MOFs, **57.8 ms/structure** single-core vs **1.34 s** for MOFChecker 2.0 (**23×**); **149 structures/s** across 10 cores. The hot paths (floating solvent, 3D-connectivity) were ported off networkx; the numeric kernels (distances, contacts, connected components, EQeq) are Rust.
-- **Drop-in.** `MOFChecker`-compatible class — same properties, same `get_mof_descriptors()`. Switch the import and existing code keeps working.
-- **Parity-verified.** 100% agreement with MOFChecker 2.0 on real QMOFs (4500/4500 descriptor-comparisons over 250 structures × 18 descriptors; 16/16 on the reference test CIFs). See [Parity](#parity).
-- **Built for batches.** `mofchecker_next.batch` parallelizes across structures, builds each graph once, and never aborts the run on a single bad structure.
-- **Bit-exact charges.** `has_high_charges` is a faithful Rust port of EQeq (bit-exact equilibrated charges).
-- **Reproducible.** `symmetry_hash` is deterministic (the reference's depends on Python hash randomization).
+- ⚡ **Fast.** On 150-atom MOFs, **57.8 ms/structure** single-core vs **1.34 s** for MOFChecker 2.0 (**23×**); **149 structures/s** across 10 cores. The hot paths (floating solvent, 3D-connectivity) were ported off networkx; the numeric kernels (distances, contacts, connected components, EQeq) are Rust.
+- 🔌 **Drop-in.** `MOFChecker`-compatible class — same properties, same `get_mof_descriptors()`. Switch the import and existing code keeps working.
+- ✅ **Parity-verified.** 100% agreement with MOFChecker 2.0 on real QMOFs (4500/4500 descriptor-comparisons over 250 structures × 18 descriptors; 16/16 on the reference test CIFs). See [Parity](#parity).
+- 📦 **Built for batches.** `mofchecker_next.batch` parallelizes across structures, builds each graph once, and never aborts the run on a single bad structure.
+- 🔋 **Bit-exact charges.** `has_high_charges` is a faithful Rust port of EQeq (bit-exact equilibrated charges).
+- 🔁 **Reproducible.** `symmetry_hash` is deterministic (the reference's depends on Python hash randomization).
 
 ## Performance
 
