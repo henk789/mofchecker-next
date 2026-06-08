@@ -1,25 +1,73 @@
-# mofchecker-next
+<h1 align="center">
+  mofchecker-next
+</h1>
 
-**A fast, drop-in replacement for [MOFChecker](https://github.com/lamalab-org/mofchecker) 2.0** — same diagnostics, same API, **~20–25× faster per core**, built on Rust kernels and rustworkx graph algorithms.
+<p align="center">
+  <b>A fast, drop-in replacement for <a href="https://github.com/lamalab-org/mofchecker">MOFChecker</a> 2.0</b> — same diagnostics, same API, <b>~20–25× faster per core</b>, built on Rust kernels and rustworkx graph algorithms.
+</p>
+
+<p align="center">
+    <a href="https://github.com/henk789/mofchecker-next/actions/workflows/release.yml">
+        <img alt="CI" src="https://github.com/henk789/mofchecker-next/actions/workflows/release.yml/badge.svg" />
+    </a>
+    <a href="https://pypi.org/project/mofchecker-next/">
+        <img alt="PyPI" src="https://img.shields.io/pypi/v/mofchecker-next" />
+    </a>
+    <a href="https://pypi.org/project/mofchecker-next/">
+        <img alt="Python versions" src="https://img.shields.io/pypi/pyversions/mofchecker-next" />
+    </a>
+    <a href="https://github.com/henk789/mofchecker-next/blob/main/py/mofchecker_next/eqeq/LICENSE">
+        <img alt="License" src="https://img.shields.io/pypi/l/mofchecker-next" />
+    </a>
+    <img alt="Speedup" src="https://img.shields.io/badge/vs%20MOFChecker%202.0-~23%C3%97%20faster-brightgreen" />
+    <img alt="Built with Rust" src="https://img.shields.io/badge/built%20with-Rust%20%2B%20PyO3-orange" />
+</p>
 
 Designed for the workloads where the original is painful: **validating thousands of model-generated MOFs** (e.g. from a diffusion model), where the slow paths — floating-solvent extraction and dimensionality — dominate.
+
+## 💪 Getting started
 
 ```python
 from mofchecker_next import MOFChecker
 
-mc = MOFChecker.from_cif("structure.cif")
+mc = MOFChecker.from_cif("structure.cif")     # also .from_ase(atoms) / MOFChecker(structure)
 mc.has_atomic_overlaps, mc.has_lone_molecule, mc.has_oms, mc.metal_number
 descriptors = mc.get_mof_descriptors()        # OrderedDict of every diagnostic
 ```
 
----
+Validating many structures? `mofchecker_next.batch` parallelizes across structures, builds each graph once, and never aborts the run on a single bad structure:
+
+```python
+from mofchecker_next.batch import check_structures
+
+# inputs may be CIF paths, pymatgen Structures, ASE Atoms, or a mix
+results = check_structures(inputs, n_workers=16)          # all CPUs by default
+bad = [r for r in results if r["has_atomic_overlaps"]]
+
+# subset to skip work: composition-only descriptors skip graph construction entirely
+fast = check_structures(inputs, descriptors=["has_atomic_overlaps", "has_overcoordinated_c"])
+```
+
+Each result is a dict with `index`, `id`, `n_atoms`, and the requested descriptors. `DEFAULT_DESCRIPTORS` is the in-scope diagnostic suite (including bit-exact `has_high_charges`); `ALL_DESCRIPTORS` adds metadata, symmetry, and graph hashes. A structure that fails gets an `error` field (`on_error="record"`) instead of aborting the batch.
+
+## 🚀 Installation
+
+```bash
+pip install mofchecker-next
+```
+
+Latest from source (needs a Rust toolchain):
+
+```bash
+pip install git+https://github.com/henk789/mofchecker-next.git
+```
 
 ## ✨ Why use it
 
 - ⚡ **Fast.** On 150-atom MOFs, **57.8 ms/structure** single-core vs **1.34 s** for MOFChecker 2.0 (**23×**); **149 structures/s** across 10 cores. The hot paths (floating solvent, 3D-connectivity) were ported off networkx; the numeric kernels (distances, contacts, connected components, EQeq) are Rust.
 - 🔌 **Drop-in.** `MOFChecker`-compatible class — same properties, same `get_mof_descriptors()`. Switch the import and existing code keeps working.
 - ✅ **Parity-verified.** 100% agreement with MOFChecker 2.0 on real QMOFs (4500/4500 descriptor-comparisons over 250 structures × 18 descriptors; 16/16 on the reference test CIFs). See **Parity** below.
-- 📦 **Built for batches.** `mofchecker_next.batch` parallelizes across structures, builds each graph once, and never aborts the run on a single bad structure.
+- 📦 **Built for batches.** Parallel `check_structures`, graph built once per structure, failures isolated.
 - 🔋 **Bit-exact charges.** `has_high_charges` is a faithful Rust port of EQeq (bit-exact equilibrated charges).
 - 🔁 **Reproducible.** `symmetry_hash` is deterministic (the reference's depends on Python hash randomization).
 
@@ -41,27 +89,10 @@ Where the speedup comes from: MOFChecker's floating-solvent check builds a 3×3�
 Python owns CIF/structure loading, pymatgen integration, and orchestration. The heavy lifting is delegated:
 
 - **Rust** (`_rust` PyO3 extension): minimum-image distances, short contacts, neighbor candidates, connected components, graph degrees, and the EQeq charge solve.
-- **rustworkx** (`checks/_subgraph_rx.py`): floating-solvent / lone-molecule detection (finite connected components via an image-offset consistency test) and Larsen dimensionality (rank of the lattice-image vectors a component spans). These replace the networkx-heavy paths in `structuregraph_helpers` / pymatgen.
-- **structuregraph_helpers** is still used for the logic-critical, non-hot pieces it does well: graph construction (tuned VESTA cutoffs) and the Weisfeiler–Lehman graph hashes.
+- **rustworkx** (`checks/_subgraph_rx.py`): floating-solvent / lone-molecule detection (finite connected components via an image-offset consistency test) and Larsen dimensionality (rank of the lattice-image vectors a component spans). These replace the networkx-heavy paths.
+- **structuregraph_helpers** is retained for the logic-critical, non-hot pieces it does well: graph construction (tuned VESTA cutoffs) and the Weisfeiler–Lehman graph hashes.
 
 The structure graph is built once per `MOFChecker` and reused across all checks.
-
-## 📦 Batch validation
-
-```python
-from mofchecker_next.batch import check_structures, check_structure
-
-# inputs may be CIF paths, pymatgen Structures, ASE Atoms, or a mix
-results = check_structures(inputs, n_workers=16)          # all CPUs by default
-bad = [r for r in results if r["has_atomic_overlaps"]]
-
-r = check_structure(path_or_structure_or_atoms)           # single structure
-
-# subset to skip work: composition-only descriptors skip graph construction entirely
-fast = check_structures(inputs, descriptors=["has_atomic_overlaps", "has_overcoordinated_c"])
-```
-
-Each result is a dict with `index`, `id`, `n_atoms`, and the requested descriptors. `DEFAULT_DESCRIPTORS` is the in-scope diagnostic suite (including bit-exact `has_high_charges`); `ALL_DESCRIPTORS` adds metadata, symmetry, and graph hashes. A structure that fails gets an `error` field (`on_error="record"`) instead of aborting the batch.
 
 ## ✅ Parity
 
@@ -71,17 +102,26 @@ Verified against a MOFChecker 2.0 checkout (used only as a behavioral oracle) vi
 - **Reference test CIFs:** 16/16.
 - **Generated (distorted) structures:** 3899/3900. The single difference is **`has_lone_molecule`, where mofchecker-next is more correct** — see Limitations.
 
-Reproduce: `scripts/qmof_parity.py` (real QMOFs), `scripts/generated_parity.py` (generated CIFs), `scripts/validate_subgraph_rx.py` (floating-solvent port).
+Reproduce: `scripts/qmof_parity.py` (real QMOFs), `scripts/generated_parity.py` (generated CIFs), `scripts/validate_subgraph_rx.py` (floating-solvent port). Point them at a local QMOF CIF directory with `QMOF_DIR=...`.
 
 ## ⚠️ Limitations & deliberate differences
 
 - **Healing not implemented.** `adding_hydrogen` / `adding_linker` raise `NotImplementedError`.
 - **No porosity.** `is_porous` returns `None` (no bundled Zeo++).
-- **`has_lone_molecule` is *more* correct than the reference.** MOFChecker 2.0's supercell+in-cell-filter heuristic silently misses finite molecules that wrap the unit-cell boundary (the origin-cell copy is truncated at the supercell face). mofchecker-next detects them via a topological finite-component test. This is the only descriptor that ever disagrees with the reference, only on pathological/distorted structures (0 disagreements on real QMOFs).
-- **Graph construction is still the floor.** pymatgen's VESTA neighbor-finding (via `structuregraph_helpers`) is unchanged; the speedup is in the graph *algorithms*, not bond perception.
+- **`has_lone_molecule` is *more* correct than the reference.** MOFChecker 2.0's supercell + in-cell-filter heuristic silently misses finite molecules that wrap the unit-cell boundary (the origin-cell copy is truncated at the supercell face). mofchecker-next detects them via a topological finite-component test. This is the only descriptor that ever disagrees with the reference, only on pathological/distorted structures (0 disagreements on real QMOFs).
+- **Graph construction is still the floor.** pymatgen's VESTA neighbor-finding is unchanged; the speedup is in the graph *algorithms*, not bond perception.
 - **Determinism.** `symmetry_hash` is deterministic by design and will not match the reference's randomized value across runs.
 
-## 🛠️ Install / build
+## ⚖️ License
+
+The **published package is GPLv2**, because it bundles `py/mofchecker_next/eqeq/` — a faithful translation of [EQeq](https://github.com/lsmo-epfl/EQeq) (GPLv2, see `py/mofchecker_next/eqeq/LICENSE`) — and the GPL governs the combined work. The non-eqeq sources are **MIT** (`LICENSE`); for an MIT-only build, omit the `eqeq` subpackage and the `has_high_charges` diagnostic.
+
+The MOFChecker 2.0 checkout used as the behavioral oracle (ANCSA 1.0) is **not** redistributed; see `external/REFERENCE.md` to reproduce it locally.
+
+## 🛠️ For developers
+
+<details>
+<summary>Build, test, and release</summary>
 
 ```bash
 python -m maturin develop --release          # build the Rust extension into the venv
@@ -89,9 +129,7 @@ python -m pytest -q                          # Python tests
 cargo test --release --manifest-path rust/Cargo.toml   # Rust tests
 ```
 
-Dependencies: `numpy`, `pymatgen` (loading + neighbor-finding), `structuregraph_helpers` (construction + hashes), `rustworkx`, `element-coder`, `libconeangle`.
-
-## 🗂️ Layout
+**Layout**
 
 - `py/mofchecker_next/` — Python package (`checks/`, `diagnostics.py`, the `eqeq` subpackage).
 - `py/mofchecker_next/checks/_subgraph_rx.py` — rustworkx floating-solvent + dimensionality.
@@ -100,8 +138,10 @@ Dependencies: `numpy`, `pymatgen` (loading + neighbor-finding), `structuregraph_
 - `tests/` — Rust and Python unit tests.
 - `docs/DIAGNOSTIC_INVENTORY.md` — per-diagnostic parity status.
 
-## ⚖️ Licensing
+**Making a release** — wheels are built and published by `.github/workflows/release.yml` via PyPI Trusted Publishing on a version tag:
 
-The **published package is GPLv2**, because it bundles `py/mofchecker_next/eqeq/` — a faithful translation of [EQeq](https://github.com/lsmo-epfl/EQeq) (GPLv2, see `py/mofchecker_next/eqeq/LICENSE`) — and the GPL governs the combined work. The non-eqeq sources are **MIT** (`LICENSE`); for an MIT-only build, omit the `eqeq` subpackage and the `has_high_charges` diagnostic.
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
 
-The MOFChecker 2.0 checkout used as the behavioral oracle (ANCSA 1.0) is **not** redistributed; see `external/REFERENCE.md` to reproduce it locally.
+</details>
