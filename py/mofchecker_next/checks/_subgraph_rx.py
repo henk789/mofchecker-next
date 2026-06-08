@@ -27,9 +27,95 @@ scripts/validate_subgraph_rx.py.
 """
 from __future__ import annotations
 
+from collections import defaultdict, deque
+
 import numpy as np
 import rustworkx as rx
 from pymatgen.util.coord import lattice_points_in_supercell
+
+
+def _connected_sites_adjacency(structure_graph):
+    """adj[i] = [(neighbour_site, jimage), ...] -- equivalent to iterating
+    StructureGraph.get_connected_sites over every site, but built once from the
+    edge list (both directions, image negated for the reverse)."""
+    n = len(structure_graph)
+    adj = [[] for _ in range(n)]
+    for u, v, d in structure_graph.graph.edges(data=True):
+        j = d.get("to_jimage", (0, 0, 0))
+        j = (int(j[0]), int(j[1]), int(j[2]))
+        adj[int(u)].append((int(v), j))
+        adj[int(v)].append((int(u), (-j[0], -j[1], -j[2])))
+    return adj
+
+
+def _component_dimensionality(adj, seed, cap=3):
+    """Larsen dimensionality of the component containing `seed`, as the rank of
+    the lattice-image vectors it spans. Faithful port of pymatgen's
+    calculate_dimensionality_of_site (rank-increasing BFS over (site, image)),
+    with early stop once the cap (3) is reached. Returns an int in [0, 3]."""
+
+    def rank(vertices):
+        if len(vertices) == 0:
+            return -1
+        if len(vertices) == 1:
+            return 0
+        arr = np.array(list(vertices))
+        return int(np.linalg.matrix_rank(arr[1:] - arr[0]))
+
+    def rank_increase(seen, candidate):
+        # `seen` is kept affinely independent, so rank(seen) == len(seen)-1
+        return rank(seen | {candidate}) > (len(seen) - 1)
+
+    seen_vertices = set()
+    seen_comp = defaultdict(set)
+    queue = deque([(seed, (0, 0, 0))])
+    while queue:
+        ci, ii = queue.popleft()
+        if (ci, ii) in seen_vertices:
+            continue
+        seen_vertices.add((ci, ii))
+        if not rank_increase(seen_comp[ci], ii):
+            continue
+        seen_comp[ci].add(ii)
+        if len(seen_comp[seed]) - 1 >= cap:  # seed already spans rank `cap`
+            return cap
+        for cj, ij in adj[ci]:
+            ij2 = (ii[0] + ij[0], ii[1] + ij[1], ii[2] + ij[2])
+            if (cj, ij2) in seen_vertices:
+                continue
+            if rank_increase(seen_comp[cj], ij2):
+                queue.append((cj, ij2))
+    return rank(seen_comp[seed])
+
+
+def structure_graph_dimensionality(structure_graph):
+    """Max Larsen dimensionality over all connected components -- matches
+    pymatgen get_dimensionality_larsen. rustworkx finds the components; the
+    per-component rank BFS replaces pymatgen's networkx/get_connected_sites path."""
+    n = len(structure_graph)
+    if n == 0:
+        return 0
+    adj = _connected_sites_adjacency(structure_graph)
+    g = rx.PyGraph(multigraph=True)
+    g.add_nodes_from(range(n))
+    for i in range(n):
+        for j, _ in adj[i]:
+            if j >= i:  # add each undirected pair once
+                g.add_edge(i, j, None)
+    best = 0
+    for comp in rx.connected_components(g):
+        seed = min(comp)
+        d = _component_dimensionality(adj, seed)
+        if d > best:
+            best = d
+            if best >= 3:
+                return 3
+    return best
+
+
+def is_3d_connected(structure_graph) -> bool:
+    """has_3d_connected_graph: any component is 3-dimensional."""
+    return structure_graph_dimensionality(structure_graph) == 3
 
 
 def _cells():

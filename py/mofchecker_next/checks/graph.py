@@ -106,10 +106,14 @@ def floating_solvent_indices_from_structure(structure, method: str = "vesta", gr
 
 
 def is_3d_connected_graph_from_structure(structure, method: str = "vesta", graph=None) -> bool:
-    """Match MOFChecker 2.0's 3D connected graph descriptor."""
-    from pymatgen.analysis.dimensionality import get_dimensionality_larsen
+    """has_3d_connected_graph. rustworkx-backed Larsen dimensionality (see
+    _subgraph_rx.is_3d_connected): replaces pymatgen get_dimensionality_larsen
+    (networkx weakly_connected_components + get_connected_sites, ~0.3 s/struct).
+    Same result -- the dimensionality is the rank of the lattice-image vectors a
+    component spans, computed by the identical rank-increasing BFS."""
+    from mofchecker_next.checks._subgraph_rx import is_3d_connected
 
-    return bool(get_dimensionality_larsen(_resolve_graph(structure, method, graph)) == 3)
+    return is_3d_connected(_resolve_graph(structure, method, graph))
 
 
 def connected_components_py(n_atoms: int, edges):
