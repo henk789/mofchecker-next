@@ -50,16 +50,30 @@ def _input_id(obj, index: int) -> str:
     return str(index)
 
 
-def check_structure(obj, *, descriptors: Sequence[str] | None = None, metals=None, method: str = "vesta") -> dict:
+def check_structure(
+    obj,
+    *,
+    descriptors: Sequence[str] | None = None,
+    metals=None,
+    method: str = "vesta",
+    distance_scale: float = 1.0,
+    clash_scale: float = 1.0,
+) -> dict:
     """Run the selected diagnostics on one structure (graph built once).
 
     ``obj`` may be a pymatgen Structure, ASE Atoms, or a CIF path. Each
     descriptor is computed independently; a descriptor that errors is reported
     under ``errors`` rather than aborting the rest.
+
+    ``distance_scale`` / ``clash_scale`` scale the bond-graph and atomic-overlap
+    cutoffs respectively (see ``MOFChecker``); both default to ``1.0``.
     """
     names = list(descriptors) if descriptors is not None else list(DEFAULT_DESCRIPTORS)
     structure = normalize_structure(obj)
-    checker = MOFChecker(structure, metals=metals, method=method)
+    checker = MOFChecker(
+        structure, metals=metals, method=method,
+        distance_scale=distance_scale, clash_scale=clash_scale,
+    )
 
     result: dict = {"n_atoms": len(structure)}
     errors = {}
@@ -73,11 +87,14 @@ def check_structure(obj, *, descriptors: Sequence[str] | None = None, metals=Non
     return result
 
 
-def _worker(item, descriptors, metals, method, on_error):
+def _worker(item, descriptors, metals, method, distance_scale, clash_scale, on_error):
     index, obj = item
     base = {"index": index, "id": _input_id(obj, index)}
     try:
-        return {**base, **check_structure(obj, descriptors=descriptors, metals=metals, method=method)}
+        return {**base, **check_structure(
+            obj, descriptors=descriptors, metals=metals, method=method,
+            distance_scale=distance_scale, clash_scale=clash_scale,
+        )}
     except Exception as exc:  # noqa: BLE001
         if on_error == "raise":
             raise
@@ -91,6 +108,8 @@ def check_structures(
     descriptors: Sequence[str] | None = None,
     metals=None,
     method: str = "vesta",
+    distance_scale: float = 1.0,
+    clash_scale: float = 1.0,
     on_error: str = "record",
     chunksize: int = 1,
     progress: bool = False,
@@ -104,6 +123,11 @@ def check_structures(
             the diagnostics). Pass ``ALL_DESCRIPTORS`` to also get metadata,
             symmetry, and graph hashes.
         metals: metal symbol set (default: MOFChecker's METALS).
+        distance_scale: multiplier on the bond-graph distance cutoffs (default
+            ``1.0`` = MOFChecker behavior; >1 relaxes, recovering slightly-long
+            bonds). Affects undercoordination, lone-molecule, and connectivity.
+        clash_scale: multiplier on the atomic-overlap (clash) cutoffs (default
+            ``1.0``). Affects ``has_atomic_overlaps``.
         on_error: ``"record"`` adds an ``error`` field to failed structures;
             ``"raise"`` propagates the first failure.
         progress: show a tqdm bar if tqdm is installed.
@@ -115,7 +139,10 @@ def check_structures(
     items = list(enumerate(inputs))
     if metals is not None:
         metals = frozenset(str(m) for m in metals)
-    work = partial(_worker, descriptors=descriptors, metals=metals, method=method, on_error=on_error)
+    work = partial(
+        _worker, descriptors=descriptors, metals=metals, method=method,
+        distance_scale=distance_scale, clash_scale=clash_scale, on_error=on_error,
+    )
 
     def _maybe_progress(iterator):
         if not progress:

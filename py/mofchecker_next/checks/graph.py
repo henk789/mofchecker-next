@@ -44,8 +44,18 @@ NO_TERMINAL_OXO_SYMBOLS = {
 }
 
 
-def build_structure_graph(structure, method: str = "vesta"):
-    """Build a StructureGraph using the MOFChecker 2.0 graph helper."""
+def build_structure_graph(structure, method: str = "vesta", distance_scale: float = 1.0):
+    """Build a StructureGraph using the MOFChecker 2.0 graph helper.
+
+    ``distance_scale`` multiplies every bond-distance cutoff before the neighbor
+    graph is built. The default ``1.0`` reproduces MOFChecker exactly. Values
+    >1 relax the cutoffs (recovering slightly-long bonds that would otherwise
+    drop edges and inflate undercoordination / lone-molecule / connectivity
+    flags); values <1 tighten them. Only meaningful for cutoff-dictionary
+    methods (``vesta``/``atr``/``li``); for other methods (``crystalnn`` etc.)
+    the cutoffs are not a simple distance table, so a non-unit scale is
+    rejected rather than silently ignored.
+    """
     import warnings
 
     from structuregraph_helpers.create import get_structure_graph
@@ -60,7 +70,26 @@ def build_structure_graph(structure, method: str = "vesta"):
             message=r".*with_local_env_strategy is deprecated.*",
             category=FutureWarning,
         )
-        return get_structure_graph(structure, method)
+        if distance_scale == 1.0:
+            return get_structure_graph(structure, method)
+
+        from pymatgen.analysis.graphs import StructureGraph
+        from pymatgen.analysis.local_env import CutOffDictNN
+        from structuregraph_helpers.create import get_local_env_method
+
+        base = get_local_env_method(method)
+        cut_off_dict = getattr(base, "cut_off_dict", None)
+        if not cut_off_dict:
+            raise ValueError(
+                f"distance_scale={distance_scale!r} is only supported for "
+                f"cutoff-dictionary methods (vesta/atr/li); method {method!r} "
+                "has no bond-distance table to scale."
+            )
+        # New dict + new NN instance -- never mutate the shared cutoff singleton.
+        scaled = CutOffDictNN(
+            cut_off_dict={pair: dist * distance_scale for pair, dist in cut_off_dict.items()}
+        )
+        return StructureGraph.with_local_env_strategy(structure, scaled)
 
 
 def _resolve_graph(structure, method, graph):

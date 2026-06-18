@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-  <b>A fast, drop-in replacement for <a href="https://github.com/lamalab-org/mofchecker">MOFChecker</a> 2.0</b> — same diagnostics, same API, <b>~20–25× faster per core</b>, built on Rust kernels and rustworkx graph algorithms.
+  <b>A fast, drop-in replacement for <a href="https://github.com/lamalab-org/mofchecker">MOFChecker</a> 2.0</b> — same diagnostics, same API, <b>~12× faster</b> on the geometric diagnostics (~7× with open-metal-site detection), built on Rust kernels and rustworkx graph algorithms.
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
     <a href="https://github.com/henk789/mofchecker-next/blob/main/py/mofchecker_next/eqeq/LICENSE">
         <img alt="License" src="https://img.shields.io/pypi/l/mofchecker-next" />
     </a>
-    <img alt="Speedup" src="https://img.shields.io/badge/vs%20MOFChecker%202.0-~23%C3%97%20faster-brightgreen" />
+    <img alt="Speedup" src="https://img.shields.io/badge/vs%20MOFChecker%202.0-~12%C3%97%20faster-brightgreen" />
     <img alt="Built with Rust" src="https://img.shields.io/badge/built%20with-Rust%20%2B%20PyO3-orange" />
 </p>
 
@@ -64,7 +64,7 @@ pip install git+https://github.com/henk789/mofchecker-next.git
 
 ## ✨ Why use it
 
-- ⚡ **Fast.** On 150-atom MOFs, **57.8 ms/structure** single-core vs **1.34 s** for MOFChecker 2.0 (**23×**); **149 structures/s** across 10 cores. The hot paths (floating solvent, 3D-connectivity) were ported off networkx; the numeric kernels (distances, contacts, connected components, EQeq) are Rust.
+- ⚡ **Fast.** On 150-atom QMOF MOFs, the geometric diagnostic set runs in **~100 ms/structure** single-core vs **~1.2 s** for MOFChecker 2.0 (**~12×**); **~79 structures/s** across 10 cores. The win is the floating-solvent and 3D-connectivity paths, ported off networkx onto rustworkx; the numeric kernels (distances, contacts, connected components, EQeq) are Rust.
 - 🔌 **Drop-in.** `MOFChecker`-compatible class — same properties, same `get_mof_descriptors()`. Switch the import and existing code keeps working.
 - ✅ **Parity-verified.** 100% agreement with MOFChecker 2.0 on real QMOFs (4500/4500 descriptor-comparisons over 250 structures × 18 descriptors; 16/16 on the reference test CIFs). See **Parity** below.
 - 📦 **Built for batches.** Parallel `check_structures`, graph built once per structure, failures isolated.
@@ -73,16 +73,20 @@ pip install git+https://github.com/henk789/mofchecker-next.git
 
 ## ⚡ Performance
 
-120 generated 150-atom CIFs, full geometric descriptor set, MOFChecker 2.0 vs mofchecker-next on identical inputs (10-core node):
+30 QMOF relaxed 150-atom MOFs, cold batch (each structure processed once), MOFChecker 2.0 vs mofchecker-next on identical inputs, dedicated Capella node, 1 vs 10 cores. Reproduce with `scripts/benchmark_throughput.py` (the structure set is pinned + fingerprinted so before/after runs are comparable).
+
+**Geometric diagnostic set** (the structural/graph checks; excludes open-metal-site detection):
 
 | | per structure | throughput | speedup |
 |---|---:|---:|---:|
-| MOFChecker 2.0 — 1 core | 1338 ms | 0.7 /s | 1× |
-| **mofchecker-next — 1 core** | **57.8 ms** | **17.3 /s** | **23.2×** |
-| MOFChecker 2.0 — 10 cores | 174.9 ms | 5.7 /s | — |
-| **mofchecker-next — 10 cores** | **6.7 ms** | **149.3 /s** | **26.1×** |
+| MOFChecker 2.0 — 1 core | 1192 ms | 0.8 /s | 1× |
+| **mofchecker-next — 1 core** | **101 ms** | **9.9 /s** | **11.8×** |
+| MOFChecker 2.0 — 10 cores | 161 ms | 6.2 /s | 1× |
+| **mofchecker-next — 10 cores** | **12.7 ms** | **78.6 /s** | **12.7×** |
 
-Where the speedup comes from: MOFChecker's floating-solvent check builds a 3×3×3 supercell graph via pymatgen `StructureGraph.__mul__` (networkx `union`/`relabel` of 27 copies, ~2.3 s/structure), and 3D-connectivity runs Larsen dimensionality over networkx. Both are replaced by direct integer image-offset algorithms on a rustworkx graph — O(N+E), no supercell — while the geometry kernels run in Rust.
+Including `has_oms` (open-metal-site order parameters) the full suite is **~7×/core** (210 ms vs 1517 ms; 28 struct/s on 10 cores) — see below.
+
+Where the speedup comes from — it is concentrated in one check. MOFChecker's floating-solvent detection (`has_lone_molecule`) builds a 3×3×3 supercell graph via pymatgen `StructureGraph.__mul__` (networkx `union`/`relabel` of 27 copies, ~940 ms/structure here) and 3D-connectivity runs Larsen dimensionality over networkx. These are replaced by direct integer image-offset algorithms on a rustworkx graph — O(N+E), no supercell — making `has_lone_molecule` ~94× faster (~940 ms → ~10 ms); it dominates the reference's runtime, so it drives the speedup. `has_oms` is **not** accelerated (it is pymatgen `LocalStructOrderParams`, the same on both sides), which is why the full suite is ~7× while the geometric set is ~12×. Speedup also grows with structure size and is higher on generated/distorted structures (more disconnected fragments).
 
 ## ⚙️ How it works
 

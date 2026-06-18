@@ -11,11 +11,10 @@ reference tables (METALS; Cordero et al. 2008 covalent radii).
 
 from __future__ import annotations
 
-import networkx as nx
+from functools import lru_cache
+
 import numpy as np
 from pymatgen.util.coord import get_angle
-from structuregraph_helpers.analysis import get_cn as _sgh_get_cn
-from structuregraph_helpers.create import construct_clean_graph
 
 from mofchecker_next.checks.graph import build_structure_graph
 
@@ -68,6 +67,13 @@ def _is_metal(site) -> bool:
     return str(site.specie) in METALS
 
 
+def _species_list(structure) -> tuple[str, ...]:
+    species = getattr(structure, "_mofchecker_next_species", None)
+    if species is None:
+        species = structure._mofchecker_next_species = tuple(str(site.specie) for site in structure)
+    return species
+
+
 def _is_halogen(site) -> bool:
     return str(site.specie) in _HALOGENS
 
@@ -91,16 +97,30 @@ def _non_metal_neighbors(neighbors):
     return [n for n in neighbors if not _is_metal(n.site)]
 
 
-def _cn(graph, index: int) -> int:
-    return _sgh_get_cn(graph, index)
-
-
 def _connected(graph, index: int):
-    return graph.get_connected_sites(index)
+    cache = getattr(graph, "_mofchecker_next_connected_sites", None)
+    if cache is None:
+        cache = graph._mofchecker_next_connected_sites = {}
+    if index not in cache:
+        cache[index] = graph.get_connected_sites(index)
+    return cache[index]
+
+
+def _cn(graph, index: int) -> int:
+    return len(_connected(graph, index))
+
+
+def _metal_neighbor_count(graph, index: int) -> int:
+    cache = getattr(graph, "_mofchecker_next_metal_neighbor_count", None)
+    if cache is None:
+        cache = graph._mofchecker_next_metal_neighbor_count = {}
+    if index not in cache:
+        cache[index] = _num_neighbor_metal(_connected(graph, index))
+    return cache[index]
 
 
 def _species(structure, index: int) -> str:
-    return str(structure[index].specie)
+    return _species_list(structure)[index]
 
 
 def _indices(structure, symbol: str) -> list[int]:
@@ -108,8 +128,22 @@ def _indices(structure, symbol: str) -> list[int]:
 
 
 def _clean_cycles(graph) -> list[list[int]]:
-    nx_graph = construct_clean_graph(graph)
-    return list(nx.simple_cycles(nx_graph, length_bound=16))
+    from mofchecker_next._rust import bounded_simple_cycles_undirected
+
+    # Same simple graph as structuregraph_helpers.construct_clean_graph(...),
+    # but skip NetworkX object construction and enumerate bounded cycles in Rust.
+    edges = {(min(u, v), max(u, v)) for u, v in graph.graph.edges() if u != v}
+    return bounded_simple_cycles_undirected(len(graph.structure), sorted(edges), 16)
+
+
+def _nonmetal_cycles_by_node(structure, cycles, length: int) -> list[list[list[int]]]:
+    by_node: list[list[list[int]]] = [[] for _ in structure]
+    is_nonmetal = [sp not in METALS for sp in _species_list(structure)]
+    for cycle in cycles:
+        if len(cycle) == length and all(is_nonmetal[i] for i in cycle):
+            for i in cycle:
+                by_node[i].append(cycle)
+    return by_node
 
 
 def get_angle_between_site_and_neighbors(site, neighbors) -> float:
@@ -207,14 +241,14 @@ def _guess_underbound_nitrogen_cn2(
 # ---------------------------------------------------------------------------
 # Fused ring
 # ---------------------------------------------------------------------------
-def fused_ring_indices(structure, graph) -> list[int]:
+def fused_ring_indices(structure, graph, cycles=None) -> list[int]:
     """Port of Fusedring_Check._get_fused_ring."""
     n_sum: list[int] = []
-    cycles = _clean_cycles(graph)
+    cycles = _clean_cycles(graph) if cycles is None else cycles
     for site_index in _indices(structure, "N"):
         cn = _cn(graph, site_index)
         neighbors = _connected(graph, site_index)
-        cm = _num_neighbor_metal(neighbors)
+        cm = _metal_neighbor_count(graph, site_index)
         if cn - cm != 2:
             continue
         non_metals = _non_metal_neighbors(neighbors)
@@ -236,46 +270,46 @@ def fused_ring_indices(structure, graph) -> list[int]:
 # ---------------------------------------------------------------------------
 # Positive charge from linkers
 # ---------------------------------------------------------------------------
-def positive_charge_indices(structure, graph) -> list[int]:
+def positive_charge_indices(structure, graph, cycles=None) -> list[int]:
     """Port of Positive_charge_Check._get_overcoordinated_nitrogen."""
     flagged: list[int] = []
     n_jump: list[int] = []
-    cycles = _clean_cycles(graph)
+    cycles = _clean_cycles(graph) if cycles is None else cycles
+    cycles16_by_node = _nonmetal_cycles_by_node(structure, cycles, 16)
     for site_index in _indices(structure, "N"):
         if site_index in n_jump:
             continue
         cn = _cn(graph, site_index)
         neighbors = _connected(graph, site_index)
-        cm = _num_neighbor_metal(neighbors)
+        cm = _metal_neighbor_count(graph, site_index)
         if cn - cm == 4:
             flagged.append(site_index)
             continue
-        for cycle in cycles:
+        for cycle in cycles16_by_node[site_index]:
             n_possible_jump: list[int] = []
-            if len(cycle) == 16 and site_index in cycle and all(not _is_metal(structure[r]) for r in cycle):
-                num_n = num_c = num_n3 = 0
-                for ring in cycle:
-                    if _species(structure, ring) == "N":
-                        n_possible_jump.append(ring)
-                        num_n += 1
-                        n_cn = _cn(graph, ring)
-                        n_cm = _num_neighbor_metal(_connected(graph, ring))
-                        if n_cn - n_cm == 3:
-                            num_n3 += 1
-                    if _species(structure, ring) == "C":
-                        num_c += 1
-                if (num_n == 4) and (num_n3 == 4) and (num_c == 12):
-                    flagged.append(site_index)
-                    flagged.append(site_index)
-                if (num_n == 4) and (num_n3 == 3) and (num_c == 12):
-                    flagged.append(site_index)
-                if (num_n == 4) and (num_c == 12):
-                    n_jump.extend(n_possible_jump)
-                    break
+            num_n = num_c = num_n3 = 0
+            for ring in cycle:
+                if _species(structure, ring) == "N":
+                    n_possible_jump.append(ring)
+                    num_n += 1
+                    n_cn = _cn(graph, ring)
+                    n_cm = _metal_neighbor_count(graph, ring)
+                    if n_cn - n_cm == 3:
+                        num_n3 += 1
+                if _species(structure, ring) == "C":
+                    num_c += 1
+            if (num_n == 4) and (num_n3 == 4) and (num_c == 12):
+                flagged.append(site_index)
+                flagged.append(site_index)
+            if (num_n == 4) and (num_n3 == 3) and (num_c == 12):
+                flagged.append(site_index)
+            if (num_n == 4) and (num_c == 12):
+                n_jump.extend(n_possible_jump)
+                break
 
     for site_index in _indices(structure, "O"):
         cn = _cn(graph, site_index)
-        cm = _num_neighbor_metal(_connected(graph, site_index))
+        cm = _metal_neighbor_count(graph, site_index)
         if cn - cm == 3:
             flagged.append(site_index)
     for site_index in _indices(structure, "Sb"):
@@ -297,7 +331,7 @@ def _neg_halogen(structure, graph) -> list[int]:
             continue
         cn = _cn(graph, site_index)
         neighbors = _connected(graph, site_index)
-        cm = _num_neighbor_metal(neighbors)
+        cm = _metal_neighbor_count(graph, site_index)
         non_metal = _non_metal_neighbor(neighbors)
         if cn - cm == 0:
             halogen_sum.append(site_index)
@@ -329,7 +363,7 @@ def _neg_oxygen(structure, graph) -> list[int]:
             continue
         cn = _cn(graph, site_index)
         neighbors = _connected(graph, site_index)
-        cm = _num_neighbor_metal(neighbors)
+        cm = _metal_neighbor_count(graph, site_index)
         if cn - cm == 0:
             o_sum.extend([site_index, site_index])
             continue
@@ -348,7 +382,7 @@ def _neg_oxygen(structure, graph) -> list[int]:
             o_possible_jump = None
             for cnb in _connected(graph, neighbor_c):
                 ncn = _cn(graph, cnb.index)
-                ncm = _num_neighbor_metal(_connected(graph, cnb.index))
+                ncm = _metal_neighbor_count(graph, cnb.index)
                 sp = str(cnb.site.specie)
                 if sp == "N":
                     num_n += 1
@@ -370,7 +404,7 @@ def _neg_oxygen(structure, graph) -> list[int]:
         elif specie in ("N", "S", "P", "Cl", "Br", "I"):
             center = non_metal.index
             center_cn = _cn(graph, center)
-            center_metal = _num_neighbor_metal(_connected(graph, center))
+            center_metal = _metal_neighbor_count(graph, center)
             o_attached = [n for n in _connected(graph, center) if str(n.site.specie) == "O"]
             num_o = len(o_attached)
             base = {"N": 1, "S": 2, "P": 3, "Cl": 1, "Br": 1, "I": 1}[specie]
@@ -378,7 +412,7 @@ def _neg_oxygen(structure, graph) -> list[int]:
             if negative_o > 0:
                 for o_atom in o_attached:
                     o_cn = _cn(graph, o_atom.index)
-                    o_cm = _num_neighbor_metal(_connected(graph, o_atom.index))
+                    o_cm = _metal_neighbor_count(graph, o_atom.index)
                     if o_atom.index != site_index:
                         o_jump.append(o_atom.index)
                     if o_cn - o_cm != 1:
@@ -412,7 +446,7 @@ def _neg_sulfur(structure, graph) -> list[int]:
             continue
         cn = _cn(graph, site_index)
         neighbors = _connected(graph, site_index)
-        cm = _num_neighbor_metal(neighbors)
+        cm = _metal_neighbor_count(graph, site_index)
         if cn - cm == 0:
             s_sum.extend([site_index, site_index])
             continue
@@ -433,7 +467,7 @@ def _neg_sulfur(structure, graph) -> list[int]:
             s_possible_jump = None
             for cnb in _connected(graph, neighbor_c):
                 ncn = _cn(graph, cnb.index)
-                ncm = _num_neighbor_metal(_connected(graph, cnb.index))
+                ncm = _metal_neighbor_count(graph, cnb.index)
                 sp = str(cnb.site.specie)
                 if sp == "S" and cnb.index != site_index:
                     num_s += 1
@@ -456,23 +490,23 @@ def _neg_sulfur(structure, graph) -> list[int]:
     return s_sum
 
 
-def _neg_nitrogen(structure, graph) -> list[int]:
+def _neg_nitrogen(structure, graph, cycles=None) -> list[int]:
     n_sum: list[int] = []
     n_jump: list[int] = []
-    cycles = _clean_cycles(graph)
+    cycles = _clean_cycles(graph) if cycles is None else cycles
     for site_index in _indices(structure, "N"):
         if site_index in n_jump:
             continue
         cn = _cn(graph, site_index)
         neighbors = _connected(graph, site_index)
-        cm = _num_neighbor_metal(neighbors)
+        cm = _metal_neighbor_count(graph, site_index)
         if cn - cm == 1:
             non_metal = _non_metal_neighbor(neighbors)
             specie = str(non_metal.site.specie)
             if specie == "C":
                 neighbor_c = non_metal.index
                 cn_c = _cn(graph, neighbor_c)
-                cm_c = _num_neighbor_metal(_connected(graph, neighbor_c))
+                cm_c = _metal_neighbor_count(graph, neighbor_c)
                 if cn_c - cm_c == 1:
                     n_sum.append(site_index)
             if specie == "N":
@@ -507,7 +541,7 @@ def _neg_nitrogen(structure, graph) -> list[int]:
                             n_possible_jump.append(ring)
                             num_n += 1
                             r_cn = _cn(graph, ring)
-                            r_cm = _num_neighbor_metal(_connected(graph, ring))
+                            r_cm = _metal_neighbor_count(graph, ring)
                             if r_cn - r_cm == 3:
                                 num_n3 += 1
                         if _species(structure, ring) == "C":
@@ -536,13 +570,13 @@ def _neg_nitrogen(structure, graph) -> list[int]:
     return n_sum
 
 
-def negative_charge_indices(structure, graph) -> list[int]:
+def negative_charge_indices(structure, graph, cycles=None) -> list[int]:
     """Port of Negative_charge_Check._run_check (halogen + O + S + N)."""
     return (
         _neg_halogen(structure, graph)
         + _neg_oxygen(structure, graph)
         + _neg_sulfur(structure, graph)
-        + _neg_nitrogen(structure, graph)
+        + _neg_nitrogen(structure, graph, cycles=cycles)
     )
 
 
@@ -560,36 +594,41 @@ def _check_if_open(lsop, is_open, weights, threshold: float = 0.5):
     return open_contributions / (open_contributions + close_contributions) > threshold
 
 
-def _ops_for_site(structure, graph, site_index):
+@lru_cache(maxsize=None)
+def _lsop(names: tuple[str, ...]):
     from pymatgen.analysis.local_env import LocalStructOrderParams
 
+    return LocalStructOrderParams(list(names))
+
+
+def _ops_for_site(structure, graph, site_index):
     cn = _cn(graph, site_index)
     if cn not in OP_DEF:
         # Mirror the reference: CN<=3 -> open, CN>8 -> undefined (None).
         return cn, None, None, None, None
-    names = OP_DEF[cn]["names"]
+    names = tuple(OP_DEF[cn]["names"])
     is_open = OP_DEF[cn]["open"]
     weights = OP_DEF[cn]["weights"]
-    lsop = LocalStructOrderParams(names)
-    return cn, names, lsop.get_order_parameters(structure, site_index), is_open, weights
+    return cn, names, _lsop(names).get_order_parameters(structure, site_index), is_open, weights
+
+
+def _is_open_metal_site(structure, graph, site_index) -> bool:
+    cn = _cn(graph, site_index)
+    if cn <= 3:
+        return True
+    if cn > 8:
+        return False
+    _, _, lsop, is_open, weights = _ops_for_site(structure, graph, site_index)
+    return bool(_check_if_open(lsop, is_open, weights))
 
 
 def oms_indices(structure, graph) -> list[int]:
     """Port of MOFOMS.check_oms."""
-    metal_indices = [i for i, site in enumerate(structure) if _is_metal(site)]
-    oms_sites: list[int] = []
-    for site_index in metal_indices:
-        cn = _cn(graph, site_index)
-        if cn <= 3:
-            site_open = True
-        elif cn > 8:
-            site_open = None
-        else:
-            _, _, lsop, is_open, weights = _ops_for_site(structure, graph, site_index)
-            site_open = _check_if_open(lsop, is_open, weights)
-        if site_open:
-            oms_sites.append(site_index)
-    return oms_sites
+    return [i for i, site in enumerate(structure) if _is_metal(site) and _is_open_metal_site(structure, graph, i)]
+
+
+def has_oms(structure, graph) -> bool:
+    return any(_is_open_metal_site(structure, graph, i) for i, site in enumerate(structure) if _is_metal(site))
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +651,7 @@ def negative_charge_from_linkers_from_structure(structure, method: str = "vesta"
 
 def has_oms_from_structure(structure, method: str = "vesta") -> bool:
     graph = build_structure_graph(structure, method)
-    return len(oms_indices(structure, graph)) > 0
+    return has_oms(structure, graph)
 
 
 def oms_indices_from_structure(structure, method: str = "vesta") -> list[int]:

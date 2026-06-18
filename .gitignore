@@ -20,3 +20,6 @@
 /parity_charge_oms.json
 /qmof_parity_report.json
 /.local-data/
+/bench_structures.json
+/bench_report.json
+/bench_*.json

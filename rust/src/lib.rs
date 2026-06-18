@@ -106,6 +106,20 @@ fn node_degrees(n_atoms: usize, edges: Vec<(usize, usize)>) -> PyResult<Vec<usiz
 }
 
 #[pyfunction]
+fn bounded_simple_cycles_undirected(
+    n_atoms: usize,
+    edges: Vec<(usize, usize)>,
+    length_bound: usize,
+) -> PyResult<Vec<Vec<usize>>> {
+    for &(a, b) in &edges {
+        if a >= n_atoms || b >= n_atoms {
+            return Err(PyValueError::new_err("edge endpoint out of bounds"));
+        }
+    }
+    Ok(graph::bounded_simple_cycles_undirected(n_atoms, &edges, length_bound))
+}
+
+#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 fn eqeq_charges(
     frac_coords: Vec<[f64; 3]>,
@@ -144,6 +158,7 @@ fn _rust(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(find_neighbor_candidates, m)?)?;
     m.add_function(wrap_pyfunction!(connected_components, m)?)?;
     m.add_function(wrap_pyfunction!(node_degrees, m)?)?;
+    m.add_function(wrap_pyfunction!(bounded_simple_cycles_undirected, m)?)?;
     m.add_function(wrap_pyfunction!(eqeq_charges, m)?)?;
     Ok(())
 }

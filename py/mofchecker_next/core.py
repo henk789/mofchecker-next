@@ -85,10 +85,28 @@ DEFAULT_DESCRIPTORS = (
 class MOFChecker:
     """MOFChecker-compatible diagnostics for a single structure."""
 
-    def __init__(self, structure, *, metals=None, method: str = "vesta", name=None, path=None):
+    def __init__(
+        self,
+        structure,
+        *,
+        metals=None,
+        method: str = "vesta",
+        distance_scale: float = 1.0,
+        clash_scale: float = 1.0,
+        name=None,
+        path=None,
+    ):
+        """``distance_scale`` multiplies the bond-distance cutoffs used to build
+        the neighbor graph (affects undercoordination, lone-molecule,
+        connectivity, OMS, and the graph hashes). ``clash_scale`` multiplies the
+        covalent-radius cutoffs used for atomic-overlap detection (affects
+        ``has_atomic_overlaps``). Both default to ``1.0``, which reproduces
+        MOFChecker exactly."""
         self.structure = structure
         self.metals = _co.METALS if metals is None else frozenset(str(m) for m in metals)
         self._method = method
+        self._distance_scale = distance_scale
+        self._clash_scale = clash_scale
         self._name = name
         self._path = path
 
@@ -114,7 +132,7 @@ class MOFChecker:
     @cached_property
     def graph(self):
         """The pymatgen StructureGraph (built once, reused by all checks)."""
-        return _g.build_structure_graph(self.structure, self._method)
+        return _g.build_structure_graph(self.structure, self._method, distance_scale=self._distance_scale)
 
     # -- metadata ----------------------------------------------------------
     @property
@@ -225,7 +243,7 @@ class MOFChecker:
             for site in self.structure
         }
         matrix = _geo.build_overlap_cutoff_matrix(atomic_numbers, radii_by_z, default_radius=COVALENT_MEDIAN)
-        contacts = _geo.check_atomic_overlaps(self.structure, matrix)
+        contacts = _geo.check_atomic_overlaps(self.structure, matrix, scale=self._clash_scale)
         idx = set()
         for d in contacts:
             for atom in d.atoms:
@@ -334,20 +352,25 @@ class MOFChecker:
 
     @property
     def has_oms(self) -> bool:
-        return len(self.oms_indice) > 0
+        return _co.has_oms(self.structure, self.graph)
 
     # -- charge ------------------------------------------------------------
+    @cached_property
+    def _clean_cycles(self):
+        # ponytail: NetworkX cycle enumeration is exact but expensive; compute it once per structure.
+        return _co._clean_cycles(self.graph)
+
     @property
     def possible_charged_fused_ring(self) -> bool:
-        return len(_co.fused_ring_indices(self.structure, self.graph)) > 0
+        return len(_co.fused_ring_indices(self.structure, self.graph, cycles=self._clean_cycles)) > 0
 
     @property
     def positive_charge_from_linkers(self) -> int:
-        return len(_co.positive_charge_indices(self.structure, self.graph))
+        return len(_co.positive_charge_indices(self.structure, self.graph, cycles=self._clean_cycles))
 
     @property
     def negative_charge_from_linkers(self) -> int:
-        return len(_co.negative_charge_indices(self.structure, self.graph))
+        return len(_co.negative_charge_indices(self.structure, self.graph, cycles=self._clean_cycles))
 
     @property
     def has_high_charges(self) -> bool:
