@@ -25,7 +25,7 @@ jobs:
       matrix:
         platform:
           - { runner: ubuntu-22.04,   target: x86_64,  manylinux: 2_28 }
-          - { runner: ubuntu-22.04,   target: aarch64, manylinux: 2_28 }
+          - { runner: ubuntu-22.04,   target: aarch64, manylinux: 2_28, docker_options: "-e BINDGEN_EXTRA_CLANG_ARGS=--sysroot=/usr/aarch64-linux-gnu/sys-root -e BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=--sysroot=/usr/aarch64-linux-gnu/sys-root" }
           - { runner: macos-14,       target: aarch64 }
           - { runner: windows-latest, target: x64 }
           # macos-13 (Intel) dropped: scarce runners stall the release; Intel-mac
@@ -37,9 +37,6 @@ jobs:
           python-version: "3.10"
       - name: Build abi3 wheel
         uses: PyO3/maturin-action@v1
-        env:
-          # qhull-sys uses bindgen. Linux aarch64 builds need the cross sysroot.
-          BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu: --sysroot=/usr/aarch64-linux-gnu/sys-root
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist
@@ -47,6 +44,7 @@ jobs:
           before-script-linux: |
             if command -v dnf >/dev/null 2>&1; then dnf install -y clang-devel; fi
             if command -v yum >/dev/null 2>&1; then yum install -y clang-devel; fi
+          docker-options: ${{ matrix.platform.docker_options || '' }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - uses: actions/upload-artifact@v4
         with:
