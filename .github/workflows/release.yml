@@ -37,10 +37,18 @@ jobs:
           python-version: "3.10"
       - name: Build abi3 wheel
         uses: PyO3/maturin-action@v1
+        env:
+          # qhull-sys uses bindgen. Linux wheels build inside manylinux
+          # containers, so provide libclang and the cross sysroot explicitly.
+          LIBCLANG_PATH: /usr/lib64
+          BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu: --sysroot=/usr/aarch64-linux-gnu/sys-root
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist
           manylinux: ${{ matrix.platform.manylinux || '' }}
+          before-script-linux: |
+            if command -v dnf >/dev/null 2>&1; then dnf install -y clang-devel; fi
+            if command -v yum >/dev/null 2>&1; then yum install -y clang-devel; fi
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - uses: actions/upload-artifact@v4
         with:
