@@ -1,13 +1,18 @@
-use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 pub mod contacts;
 pub mod eqeq;
 pub mod graph;
+pub mod oms;
 pub mod pbc;
+pub mod voronoi;
 
-fn image_distance_to_object(py: Python<'_>, image_distance: pbc::ImageDistance) -> PyResult<PyObject> {
+fn image_distance_to_object(
+    py: Python<'_>,
+    image_distance: pbc::ImageDistance,
+) -> PyResult<PyObject> {
     let dict = PyDict::new_bound(py);
     dict.set_item("delta_frac", image_distance.delta_frac.to_vec())?;
     dict.set_item("image", image_distance.image.to_vec())?;
@@ -116,7 +121,21 @@ fn bounded_simple_cycles_undirected(
             return Err(PyValueError::new_err("edge endpoint out of bounds"));
         }
     }
-    Ok(graph::bounded_simple_cycles_undirected(n_atoms, &edges, length_bound))
+    Ok(graph::bounded_simple_cycles_undirected(
+        n_atoms,
+        &edges,
+        length_bound,
+    ))
+}
+
+#[pyfunction]
+fn oms_is_open(cn: usize, center: [f64; 3], neighbor_coords: Vec<[f64; 3]>) -> PyResult<bool> {
+    Ok(oms::oms_is_open(cn, center, &neighbor_coords))
+}
+
+#[pyfunction]
+fn voronoi_center_neighbors(points: Vec<[f64; 3]>) -> PyResult<Vec<usize>> {
+    voronoi::center_neighbors(&points).map_err(PyValueError::new_err)
 }
 
 #[pyfunction]
@@ -159,6 +178,8 @@ fn _rust(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(connected_components, m)?)?;
     m.add_function(wrap_pyfunction!(node_degrees, m)?)?;
     m.add_function(wrap_pyfunction!(bounded_simple_cycles_undirected, m)?)?;
+    m.add_function(wrap_pyfunction!(oms_is_open, m)?)?;
+    m.add_function(wrap_pyfunction!(voronoi_center_neighbors, m)?)?;
     m.add_function(wrap_pyfunction!(eqeq_charges, m)?)?;
     Ok(())
 }

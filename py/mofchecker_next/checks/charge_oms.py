@@ -4,14 +4,12 @@ Faithful functional ports of MOFChecker 2.0's graph-based heuristics
 (`positive_charge.py`, `negative_charge.py`, `fused_ring.py`, `oms/`). They run
 on a pymatgen ``StructureGraph`` built the same way the reference builds it
 (`structuregraph_helpers`, "vesta" method), and reuse the same library calls
-(`construct_clean_graph`, `get_cn`, `nx.simple_cycles`, `LocalStructOrderParams`)
-so the results match the reference. The metal set and covalent radii mirror the
+(`construct_clean_graph`, `get_cn`, `nx.simple_cycles`) so the results match
+the reference. The metal set and covalent radii mirror the
 reference tables (METALS; Cordero et al. 2008 covalent radii).
 """
 
 from __future__ import annotations
-
-from functools import lru_cache
 
 import numpy as np
 from pymatgen.util.coord import get_angle
@@ -48,17 +46,6 @@ COVALENT_RADII = {
     "At": 1.5, "Rn": 1.5, "Fr": 2.6, "Ra": 2.21, "Ac": 2.15, "Th": 2.06,
     "Pa": 2.0, "U": 1.96, "Np": 1.9, "Pu": 1.87, "Am": 1.8, "Cm": 1.69,
 }
-
-# Order-parameter thresholds for OMS detection (MOFChecker 2.0 oms/definitions.py).
-OP_DEF = {
-    4: {"names": ["sq_plan", "sq", "see_saw_rect", "tet", "tri_pyr"],
-        "weights": [0.2, 0.1, 0.1, 0.5, 0.5], "open": [0, 1, 2, 4]},
-    5: {"names": ["pent_plan", "sq_pyr", "tri_bipyr"], "weights": [1, 0.5, 0.5], "open": [0, 1]},
-    6: {"names": ["pent_pyr", "oct"], "weights": [0.3, 0.7], "open": [0]},
-    7: {"names": ["hex_pyr", "pent_bipyr"], "weights": [0.7, 0.3], "open": [0]},
-    8: {"names": ["hex_bipyr"], "weights": [1], "open": None},
-}
-
 
 # ---------------------------------------------------------------------------
 # Small helpers mirroring the reference get_indices utilities.
@@ -583,43 +570,36 @@ def negative_charge_indices(structure, graph, cycles=None) -> list[int]:
 # ---------------------------------------------------------------------------
 # Open metal sites
 # ---------------------------------------------------------------------------
-def _check_if_open(lsop, is_open, weights, threshold: float = 0.5):
-    if lsop is None:
-        return None
-    if is_open is None:
-        return False
-    lsop = np.array(lsop) * np.array(weights)
-    open_contributions = lsop[is_open].sum()
-    close_contributions = lsop.sum() - open_contributions
-    return open_contributions / (open_contributions + close_contributions) > threshold
+def _voronoi_neighbor_coords(structure, site_index: int):
+    cache = getattr(structure, "_mofchecker_next_voronoi_neighbor_coords", None)
+    if cache is None:
+        cache = structure._mofchecker_next_voronoi_neighbor_coords = {}
+    if site_index not in cache:
+        from mofchecker_next._rust import voronoi_center_neighbors
 
+        center = structure[site_index]
+        shell = sorted(structure.get_sites_in_sphere(center.coords, 13.0), key=lambda x: x[1])
+        coords = [site.coords.tolist() for site, *_ in shell]
+        try:
+            cache[site_index] = [coords[i] for i in voronoi_center_neighbors(coords)]
+        except ValueError:
+            # ponytail: exact fallback if qhull rejects a degenerate cluster.
+            from pymatgen.analysis.local_env import VoronoiNN
 
-@lru_cache(maxsize=None)
-def _lsop(names: tuple[str, ...]):
-    from pymatgen.analysis.local_env import LocalStructOrderParams
-
-    return LocalStructOrderParams(list(names))
-
-
-def _ops_for_site(structure, graph, site_index):
-    cn = _cn(graph, site_index)
-    if cn not in OP_DEF:
-        # Mirror the reference: CN<=3 -> open, CN>8 -> undefined (None).
-        return cn, None, None, None, None
-    names = tuple(OP_DEF[cn]["names"])
-    is_open = OP_DEF[cn]["open"]
-    weights = OP_DEF[cn]["weights"]
-    return cn, names, _lsop(names).get_order_parameters(structure, site_index), is_open, weights
+            cache[site_index] = [n.coords.tolist() for n in VoronoiNN(tol=0).get_nn(structure, site_index)]
+    return cache[site_index]
 
 
 def _is_open_metal_site(structure, graph, site_index) -> bool:
-    cn = _cn(graph, site_index)
-    if cn <= 3:
-        return True
-    if cn > 8:
-        return False
-    _, _, lsop, is_open, weights = _ops_for_site(structure, graph, site_index)
-    return bool(_check_if_open(lsop, is_open, weights))
+    from mofchecker_next._rust import oms_is_open
+
+    return bool(
+        oms_is_open(
+            _cn(graph, site_index),
+            structure[site_index].coords.tolist(),
+            _voronoi_neighbor_coords(structure, site_index),
+        )
+    )
 
 
 def oms_indices(structure, graph) -> list[int]:

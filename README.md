@@ -64,7 +64,7 @@ pip install git+https://github.com/henk789/mofchecker-next.git
 
 ## ✨ Why use it
 
-- ⚡ **Fast.** On 150-atom QMOF MOFs, the geometric diagnostic set runs in **~100 ms/structure** single-core vs **~1.2 s** for MOFChecker 2.0 (**~12×**); **~79 structures/s** across 10 cores. The win is the floating-solvent and 3D-connectivity paths, ported off networkx onto rustworkx; the numeric kernels (distances, contacts, connected components, EQeq) are Rust.
+- ⚡ **Fast.** On 150-atom QMOF MOFs, the geometric diagnostic set runs in **~101 ms/structure** single-core vs **~1.20 s** for MOFChecker 2.0 (**~12×**); **~77 structures/s** across 10 cores. The win is the floating-solvent and 3D-connectivity paths, ported off networkx onto rustworkx; the numeric kernels (distances, contacts, connected components, OMS Voronoi/order-parameters, EQeq) are Rust.
 - 🔌 **Drop-in.** `MOFChecker`-compatible class — same properties, same `get_mof_descriptors()`. Switch the import and existing code keeps working.
 - ✅ **Parity-verified.** 100% agreement with MOFChecker 2.0 on real QMOFs (4500/4500 descriptor-comparisons over 250 structures × 18 descriptors; 16/16 on the reference test CIFs). See **Parity** below.
 - 📦 **Built for batches.** Parallel `check_structures`, graph built once per structure, failures isolated.
@@ -73,26 +73,33 @@ pip install git+https://github.com/henk789/mofchecker-next.git
 
 ## ⚡ Performance
 
-30 QMOF relaxed 150-atom MOFs, cold batch (each structure processed once), MOFChecker 2.0 vs mofchecker-next on identical inputs, dedicated Capella node, 1 vs 10 cores. Reproduce with `scripts/benchmark_throughput.py` (the structure set is pinned + fingerprinted so before/after runs are comparable).
+30 QMOF relaxed 150-atom MOFs, cold batch (each structure processed once), MOFChecker 2.0 vs mofchecker-next on identical inputs, dedicated compute node, 1 vs 10 cores. Reproduce with `scripts/benchmark_throughput.py` (the structure set is pinned + fingerprinted so before/after runs are comparable).
 
 **Geometric diagnostic set** (the structural/graph checks; excludes open-metal-site detection):
 
 | | per structure | throughput | speedup |
 |---|---:|---:|---:|
-| MOFChecker 2.0 — 1 core | 1192 ms | 0.8 /s | 1× |
-| **mofchecker-next — 1 core** | **101 ms** | **9.9 /s** | **11.8×** |
-| MOFChecker 2.0 — 10 cores | 161 ms | 6.2 /s | 1× |
-| **mofchecker-next — 10 cores** | **12.7 ms** | **78.6 /s** | **12.7×** |
+| MOFChecker 2.0 — 1 core | 1201 ms | 0.8 /s | 1× |
+| **mofchecker-next — 1 core** | **101 ms** | **9.9 /s** | **11.9×** |
+| MOFChecker 2.0 — 10 cores | 162 ms | 6.2 /s | 1× |
+| **mofchecker-next — 10 cores** | **13.1 ms** | **76.6 /s** | **12.4×** |
 
-Including `has_oms` (open-metal-site order parameters) the full suite is **~7×/core** (210 ms vs 1517 ms; 28 struct/s on 10 cores) — see below.
+**Full geometric suite** (includes `has_oms` open-metal-site order parameters):
 
-Where the speedup comes from — it is concentrated in one check. MOFChecker's floating-solvent detection (`has_lone_molecule`) builds a 3×3×3 supercell graph via pymatgen `StructureGraph.__mul__` (networkx `union`/`relabel` of 27 copies, ~940 ms/structure here) and 3D-connectivity runs Larsen dimensionality over networkx. These are replaced by direct integer image-offset algorithms on a rustworkx graph — O(N+E), no supercell — making `has_lone_molecule` ~94× faster (~940 ms → ~10 ms); it dominates the reference's runtime, so it drives the speedup. `has_oms` is **not** accelerated (it is pymatgen `LocalStructOrderParams`, the same on both sides), which is why the full suite is ~7× while the geometric set is ~12×. Speedup also grows with structure size and is higher on generated/distorted structures (more disconnected fragments).
+| | per structure | throughput | speedup |
+|---|---:|---:|---:|
+| MOFChecker 2.0 — 1 core | 1535 ms | 0.7 /s | 1× |
+| **mofchecker-next — 1 core** | **140 ms** | **7.1 /s** | **10.9×** |
+| MOFChecker 2.0 — 10 cores | 197 ms | 5.1 /s | 1× |
+| **mofchecker-next — 10 cores** | **20.0 ms** | **49.9 /s** | **9.8×** |
+
+Where the speedup comes from — it is concentrated in one check. MOFChecker's floating-solvent detection (`has_lone_molecule`) builds a 3×3×3 supercell graph via pymatgen `StructureGraph.__mul__` (networkx `union`/`relabel` of 27 copies, ~940 ms/structure here) and 3D-connectivity runs Larsen dimensionality over networkx. These are replaced by direct integer image-offset algorithms on a rustworkx graph — O(N+E), no supercell — making `has_lone_molecule` ~94× faster (~940 ms → ~10 ms); it dominates the reference's runtime, so it drives the speedup. `has_oms` now uses Rust for Voronoi facet-neighbor selection and pymatgen-compatible local order-parameter formulas. Speedup also grows with structure size and is higher on generated/distorted structures (more disconnected fragments).
 
 ## ⚙️ How it works
 
 Python owns CIF/structure loading, pymatgen integration, and orchestration. The heavy lifting is delegated:
 
-- **Rust** (`_rust` PyO3 extension): minimum-image distances, short contacts, neighbor candidates, connected components, graph degrees, and the EQeq charge solve.
+- **Rust** (`_rust` PyO3 extension): minimum-image distances, short contacts, neighbor candidates, connected components, graph degrees, OMS Voronoi/order-parameters, and the EQeq charge solve.
 - **rustworkx** (`checks/_subgraph_rx.py`): floating-solvent / lone-molecule detection (finite connected components via an image-offset consistency test) and Larsen dimensionality (rank of the lattice-image vectors a component spans). These replace the networkx-heavy paths.
 - **structuregraph_helpers** is retained for the logic-critical, non-hot pieces it does well: graph construction (tuned VESTA cutoffs) and the Weisfeiler–Lehman graph hashes.
 
@@ -131,13 +138,14 @@ The MOFChecker 2.0 checkout used as the behavioral oracle (ANCSA 1.0) is **not**
 python -m maturin develop --release          # build the Rust extension into the venv
 python -m pytest -q                          # Python tests
 cargo test --release --manifest-path rust/Cargo.toml   # Rust tests
+# Source builds need libclang available for qhull-sys/bindgen.
 ```
 
 **Layout**
 
 - `py/mofchecker_next/` — Python package (`checks/`, `diagnostics.py`, the `eqeq` subpackage).
 - `py/mofchecker_next/checks/_subgraph_rx.py` — rustworkx floating-solvent + dimensionality.
-- `rust/` — the `_rust` PyO3 extension (geometry + EQeq kernels).
+- `rust/` — the `_rust` PyO3 extension (geometry + OMS + EQeq kernels).
 - `scripts/` — parity harnesses and the speed benchmark.
 - `tests/` — Rust and Python unit tests.
 - `docs/DIAGNOSTIC_INVENTORY.md` — per-diagnostic parity status.

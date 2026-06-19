@@ -17,6 +17,7 @@ from pymatgen.core import Lattice, Structure  # noqa: E402
 
 from mofchecker_next.checks.charge_oms import (  # noqa: E402
     _clean_cycles,
+    _voronoi_neighbor_coords,
     negative_charge_from_linkers_from_structure,
     oms_indices_from_structure,
     positive_charge_from_linkers_from_structure,
@@ -104,3 +105,12 @@ def test_oms_no_metal_returns_empty():
     # No metal -> no open metal site (we return empty rather than raising).
     structure = _box(["O", "O"], [[0, 0, 0], [10, 10, 10]])
     assert oms_indices_from_structure(structure) == []
+
+
+def test_rust_voronoi_neighbors_match_pymatgen():
+    from pymatgen.analysis.local_env import VoronoiNN
+
+    structure = _box(["Zn", "O", "O", "O", "O"], [[0, 0, 0], [1, 1, 1], [1, -1, -1], [-1, 1, -1], [-1, -1, 1]])
+    ours = {tuple(round(float(v), 4) for v in c) for c in _voronoi_neighbor_coords(structure, 0)}
+    ref = {tuple(round(float(v), 4) for v in n.coords) for n in VoronoiNN(tol=0).get_nn(structure, 0)}
+    assert ours == ref
