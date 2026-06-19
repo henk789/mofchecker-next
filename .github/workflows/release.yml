@@ -24,8 +24,8 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - { runner: ubuntu-22.04,   target: x86_64,  manylinux: auto }
-          - { runner: ubuntu-22.04,   target: aarch64, manylinux: auto }
+          - { runner: ubuntu-22.04,   target: x86_64,  manylinux: 2_28 }
+          - { runner: ubuntu-22.04,   target: aarch64, manylinux: 2_28 }
           - { runner: macos-14,       target: aarch64 }
           - { runner: windows-latest, target: x64 }
           # macos-13 (Intel) dropped: scarce runners stall the release; Intel-mac
@@ -38,9 +38,7 @@ jobs:
       - name: Build abi3 wheel
         uses: PyO3/maturin-action@v1
         env:
-          # qhull-sys uses bindgen. Linux wheels build inside manylinux
-          # containers, so provide libclang and the cross sysroot explicitly.
-          LIBCLANG_PATH: /usr/lib64
+          # qhull-sys uses bindgen. Linux aarch64 builds need the cross sysroot.
           BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu: --sysroot=/usr/aarch64-linux-gnu/sys-root
         with:
           target: ${{ matrix.platform.target }}
