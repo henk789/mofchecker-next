@@ -13,7 +13,9 @@ from mofchecker_next.batch import (  # noqa: E402
     DEFAULT_DESCRIPTORS,
     check_structure,
     check_structures,
+    is_valid,
     normalize_structure,
+    summarize_results,
 )
 
 
@@ -83,3 +85,18 @@ def test_check_structures_mixed_inputs(tmp_path):
     results = check_structures([s, str(p)], n_workers=1)
     assert results[0]["n_atoms"] == results[1]["n_atoms"] == 6
     assert results[1]["id"] == "m.cif"
+
+
+def test_summarize_results():
+    good = {"id": "good", "has_carbon": True, "has_metal": True, "has_3d_connected_graph": True}
+    bad = {"id": "bad", "has_carbon": True, "has_metal": True, "has_3d_connected_graph": False}
+    err = {"id": "err", "error": "boom"}
+    assert is_valid(good) is True
+    assert is_valid(bad) is False
+    assert is_valid(err) is None
+    s = summarize_results([good, bad, err])
+    assert s["n_structures"] == 3
+    assert s["n_scored"] == 2
+    assert s["n_valid"] == 1
+    assert s["valid_rate"] == 0.5
+    assert s["valid_rate_incl_errors"] == 1 / 3

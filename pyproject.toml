@@ -25,6 +25,9 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/henk789/mofchecker-next"
 
+[project.scripts]
+mofchecker-next = "mofchecker_next.cli:main"
+
 [project.optional-dependencies]
 test = ["pytest>=8", "maturin>=1.7,<2"]
 parity = ["pymatgen>=2024.8"]

@@ -43,6 +43,13 @@ DEFAULT_DESCRIPTORS = (
     "has_high_charges",
 )
 
+PROBLEM_FLAGS = (
+    "has_atomic_overlaps", "has_overcoordinated_c", "has_overcoordinated_n",
+    "has_overcoordinated_h", "has_undercoordinated_c", "has_undercoordinated_n",
+    "has_lone_molecule", "has_suspicious_terminal_oxo", "has_high_charges",
+)
+PRESENCE_FLAGS = ("has_carbon", "has_metal", "has_3d_connected_graph")
+
 
 def _input_id(obj, index: int) -> str:
     if isinstance(obj, (str, Path)):
@@ -111,7 +118,7 @@ def check_structures(
     distance_scale: float = 1.0,
     clash_scale: float = 1.0,
     on_error: str = "record",
-    chunksize: int = 1,
+    chunksize: int = 4,
     progress: bool = False,
 ) -> list[dict]:
     """Validate many structures in parallel.
@@ -163,3 +170,42 @@ def check_structures(
 
     results.sort(key=lambda r: r["index"])
     return results
+
+
+def is_valid(result: dict) -> bool | None:
+    """Composite generated-MOF validity used by batch summaries.
+
+    ``None`` means the structure failed before it could be scored.
+    """
+    if result.get("error"):
+        return None
+    if any(result.get(flag) is True for flag in PROBLEM_FLAGS):
+        return False
+    if any(result.get(flag) is not True for flag in PRESENCE_FLAGS):
+        return False
+    return True
+
+
+def summarize_results(results: Sequence[dict]) -> dict:
+    n = len(results)
+    n_err = sum(1 for r in results if r.get("error"))
+    valids = [is_valid(r) for r in results]
+    n_valid = sum(v is True for v in valids)
+    n_scored = sum(v is not None for v in valids)
+    per_desc = {}
+    for d in DEFAULT_DESCRIPTORS:
+        bools = [r.get(d) for r in results if not r.get("error") and isinstance(r.get(d), bool)]
+        if bools:
+            per_desc[d] = sum(bools) / len(bools)
+    return {
+        "n_structures": n,
+        "n_errors": n_err,
+        "n_scored": n_scored,
+        "n_valid": n_valid,
+        "valid_rate": (n_valid / n_scored) if n_scored else 0.0,
+        "valid_rate_incl_errors": (n_valid / n) if n else 0.0,
+        "composite_problem_flags": list(PROBLEM_FLAGS),
+        "composite_presence_flags": list(PRESENCE_FLAGS),
+        "descriptor_true_rate": per_desc,
+        "errors": {r.get("id", str(i)): r.get("error") for i, r in enumerate(results) if r.get("error")},
+    }
