@@ -118,7 +118,7 @@ def check_structures(
     distance_scale: float = 1.0,
     clash_scale: float = 1.0,
     on_error: str = "record",
-    chunksize: int = 4,
+    chunksize: int = 1,
     progress: bool = False,
 ) -> list[dict]:
     """Validate many structures in parallel.
@@ -166,7 +166,9 @@ def check_structures(
         results = list(_maybe_progress(map(work, items)))
     else:
         with Pool(n_workers) as pool:
-            results = list(_maybe_progress(pool.imap(work, items, chunksize=chunksize)))
+            # Results carry their original index and are sorted below. Unordered
+            # iteration avoids head-of-line stalls when one generated structure is slow.
+            results = list(_maybe_progress(pool.imap_unordered(work, items, chunksize=chunksize)))
 
     results.sort(key=lambda r: r["index"])
     return results

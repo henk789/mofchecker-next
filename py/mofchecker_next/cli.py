@@ -13,7 +13,7 @@ def main() -> None:
     p.add_argument("--cif_dir", type=Path, help="Directory containing *.cif")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--n_workers", type=int, default=None)
-    p.add_argument("--chunksize", type=int, default=4)
+    p.add_argument("--chunksize", type=int, default=1)
     p.add_argument("--output_json", type=Path)
     p.add_argument("--all_descriptors", action="store_true")
     args = p.parse_args()
