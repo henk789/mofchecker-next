@@ -117,9 +117,14 @@ def _indices(structure, symbol: str) -> list[int]:
 def _clean_cycles(graph) -> list[list[int]]:
     from mofchecker_next._rust import bounded_simple_cycles_undirected
 
-    # Same simple graph as structuregraph_helpers.construct_clean_graph(...),
-    # but skip NetworkX object construction and enumerate bounded cycles in Rust.
-    edges = {(min(u, v), max(u, v)) for u, v in graph.graph.edges() if u != v}
+    # Charge/ring checks below only use all-nonmetal cycles. Filtering metals
+    # before enumeration avoids combinatorial blow-ups from dense metal clusters.
+    nonmetal = [sp not in METALS for sp in _species_list(graph.structure)]
+    edges = {
+        (min(u, v), max(u, v))
+        for u, v in graph.graph.edges()
+        if u != v and nonmetal[u] and nonmetal[v]
+    }
     return bounded_simple_cycles_undirected(len(graph.structure), sorted(edges), 16)
 
 

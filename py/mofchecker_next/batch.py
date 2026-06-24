@@ -21,6 +21,7 @@ Example
 from __future__ import annotations
 
 import os
+import signal
 from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
@@ -94,10 +95,18 @@ def check_structure(
     return result
 
 
-def _worker(item, descriptors, metals, method, distance_scale, clash_scale, on_error):
+def _alarm(_signum, _frame):
+    raise TimeoutError("structure check timed out")
+
+
+def _worker(item, descriptors, metals, method, distance_scale, clash_scale, on_error, timeout_s):
     index, obj = item
     base = {"index": index, "id": _input_id(obj, index)}
+    old_handler = None
     try:
+        if timeout_s:
+            old_handler = signal.signal(signal.SIGALRM, _alarm)
+            signal.setitimer(signal.ITIMER_REAL, float(timeout_s))
         return {**base, **check_structure(
             obj, descriptors=descriptors, metals=metals, method=method,
             distance_scale=distance_scale, clash_scale=clash_scale,
@@ -106,6 +115,11 @@ def _worker(item, descriptors, metals, method, distance_scale, clash_scale, on_e
         if on_error == "raise":
             raise
         return {**base, "error": f"{type(exc).__name__}: {exc}"[:200]}
+    finally:
+        if timeout_s:
+            signal.setitimer(signal.ITIMER_REAL, 0.0)
+            if old_handler is not None:
+                signal.signal(signal.SIGALRM, old_handler)
 
 
 def check_structures(
@@ -120,6 +134,7 @@ def check_structures(
     on_error: str = "record",
     chunksize: int = 1,
     progress: bool = False,
+    timeout_s: float | None = None,
 ) -> list[dict]:
     """Validate many structures in parallel.
 
@@ -138,6 +153,8 @@ def check_structures(
         on_error: ``"record"`` adds an ``error`` field to failed structures;
             ``"raise"`` propagates the first failure.
         progress: show a tqdm bar if tqdm is installed.
+        timeout_s: optional per-structure wall-clock timeout; timed-out
+            structures are recorded as errors when ``on_error='record'``.
 
     Returns:
         list of per-structure dicts (ordered to match ``inputs``), each with an
@@ -149,6 +166,7 @@ def check_structures(
     work = partial(
         _worker, descriptors=descriptors, metals=metals, method=method,
         distance_scale=distance_scale, clash_scale=clash_scale, on_error=on_error,
+        timeout_s=timeout_s,
     )
 
     def _maybe_progress(iterator):
@@ -166,8 +184,6 @@ def check_structures(
         results = list(_maybe_progress(map(work, items)))
     else:
         with Pool(n_workers) as pool:
-            # Results carry their original index and are sorted below. Unordered
-            # iteration avoids head-of-line stalls when one generated structure is slow.
             results = list(_maybe_progress(pool.imap_unordered(work, items, chunksize=chunksize)))
 
     results.sort(key=lambda r: r["index"])

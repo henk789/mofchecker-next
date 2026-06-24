@@ -12,10 +12,12 @@ def main() -> None:
     p.add_argument("paths", nargs="*", type=Path, help="CIF files or directories containing *.cif")
     p.add_argument("--cif_dir", type=Path, help="Directory containing *.cif")
     p.add_argument("--limit", type=int, default=None)
-    p.add_argument("--n_workers", type=int, default=None)
+    p.add_argument("--n_workers", type=int, default=1)
     p.add_argument("--chunksize", type=int, default=1)
+    p.add_argument("--timeout_s", type=float, default=120.0, help="per-CIF timeout; 0 disables")
     p.add_argument("--output_json", type=Path)
     p.add_argument("--all_descriptors", action="store_true")
+    p.add_argument("--no_progress", action="store_true")
     args = p.parse_args()
 
     inputs: list[Path] = []
@@ -36,7 +38,8 @@ def main() -> None:
         n_workers=args.n_workers,
         descriptors=descriptors,
         chunksize=args.chunksize,
-        progress=True,
+        progress=not args.no_progress,
+        timeout_s=args.timeout_s or None,
     )
     summary = summarize_results(results)
     print(json.dumps(summary, indent=2, sort_keys=True))
