@@ -88,8 +88,8 @@ def test_check_structures_mixed_inputs(tmp_path):
 
 
 def test_summarize_results():
-    good = {"id": "good", "has_carbon": True, "has_metal": True, "has_3d_connected_graph": True}
-    bad = {"id": "bad", "has_carbon": True, "has_metal": True, "has_3d_connected_graph": False}
+    good = {"id": "good", "has_carbon": True, "has_hydrogen": True, "has_metal": True}
+    bad = {"id": "bad", "has_carbon": True, "has_hydrogen": True, "has_metal": True, "has_stray_atom": True}
     err = {"id": "err", "error": "boom"}
     assert is_valid(good) is True
     assert is_valid(bad) is False
@@ -100,3 +100,9 @@ def test_summarize_results():
     assert s["n_valid"] == 1
     assert s["valid_rate"] == 0.5
     assert s["valid_rate_incl_errors"] == 1 / 3
+
+
+def test_stray_atom_preserves_composite_validity():
+    base = {"has_carbon": True, "has_hydrogen": True, "has_metal": True}
+    assert is_valid(base | {"has_stray_atom": True, "has_lone_molecule": False}) is False
+    assert is_valid(base | {"has_stray_atom": False, "has_lone_molecule": True}) is False

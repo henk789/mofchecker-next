@@ -55,6 +55,15 @@ def test_graph_built_once():
     assert c.graph is g1  # cached, reused across checks
 
 
+def test_floating_solvent_split_stray_vs_lone_molecule():
+    c = MOFChecker(_mof_like())
+    c.__dict__["floating_solvent_indices"] = [[1], [2, 3]]
+    assert c.stray_atom_indices == [[1]]
+    assert c.lone_molecule_indices == [[2, 3]]
+    assert c.has_stray_atom is True
+    assert c.has_lone_molecule is True
+
+
 def test_get_mof_descriptors_default_and_subset():
     c = MOFChecker(_mof_like())
     full = c.get_mof_descriptors()

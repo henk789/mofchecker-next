@@ -75,7 +75,7 @@ DEFAULT_DESCRIPTORS = (
     "has_atomic_overlaps", "has_overcoordinated_c", "has_overcoordinated_n",
     "has_overcoordinated_h", "has_undercoordinated_c", "has_undercoordinated_n",
     "has_undercoordinated_rare_earth", "has_undercoordinated_alkali_alkaline",
-    "has_lone_molecule", "has_3d_connected_graph", "has_suspicious_terminal_oxo",
+    "has_stray_atom", "has_lone_molecule", "has_3d_connected_graph", "has_suspicious_terminal_oxo",
     "has_geometrically_exposed_metal", "possible_charged_fused_ring",
     "positive_charge_from_linkers", "negative_charge_from_linkers",
     "has_high_charges", "has_oms", "is_porous",
@@ -318,8 +318,23 @@ class MOFChecker:
 
     # -- floating solvent / connectivity ----------------------------------
     @cached_property
-    def lone_molecule_indices(self) -> list:
+    def floating_solvent_indices(self) -> list:
+        """All finite detached components (old lone_molecule_indices behavior)."""
         return _g.floating_solvent_indices_from_structure(self.structure, graph=self.graph)
+
+    @property
+    def stray_atom_indices(self) -> list:
+        """Detached finite components containing exactly one atom."""
+        return [idx for idx in self.floating_solvent_indices if len(idx) == 1]
+
+    @property
+    def has_stray_atom(self) -> bool:
+        return len(self.stray_atom_indices) > 0
+
+    @property
+    def lone_molecule_indices(self) -> list:
+        """Detached finite components containing two or more atoms."""
+        return [idx for idx in self.floating_solvent_indices if len(idx) >= 2]
 
     @property
     def has_lone_molecule(self) -> bool:

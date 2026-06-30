@@ -38,18 +38,25 @@ DEFAULT_DESCRIPTORS = (
     "has_atomic_overlaps", "has_overcoordinated_c", "has_overcoordinated_n",
     "has_overcoordinated_h", "has_undercoordinated_c", "has_undercoordinated_n",
     "has_undercoordinated_rare_earth", "has_undercoordinated_alkali_alkaline",
-    "has_lone_molecule", "has_3d_connected_graph", "has_suspicious_terminal_oxo",
+    "has_stray_atom", "has_lone_molecule", "has_3d_connected_graph", "has_suspicious_terminal_oxo",
     "has_geometrically_exposed_metal", "possible_charged_fused_ring",
     "positive_charge_from_linkers", "negative_charge_from_linkers", "has_oms",
     "has_high_charges",
 )
 
+# Composite validity = ADiT / Mofasa "Validity rate (all passed)" (Mofasa paper
+# Appendix G, Table 4): a structure is valid iff all 3 presence checks are True
+# and all 12 problem checks are False. NB this differs from the older native
+# composite -- it adds has_hydrogen + has_geometrically_exposed_metal and
+# DROPS has_3d_connected_graph.
 PROBLEM_FLAGS = (
     "has_atomic_overlaps", "has_overcoordinated_c", "has_overcoordinated_n",
     "has_overcoordinated_h", "has_undercoordinated_c", "has_undercoordinated_n",
-    "has_lone_molecule", "has_suspicious_terminal_oxo", "has_high_charges",
+    "has_undercoordinated_rare_earth", "has_undercoordinated_alkali_alkaline",
+    "has_stray_atom", "has_lone_molecule", "has_suspicious_terminal_oxo", "has_high_charges",
+    "has_geometrically_exposed_metal",
 )
-PRESENCE_FLAGS = ("has_carbon", "has_metal", "has_3d_connected_graph")
+PRESENCE_FLAGS = ("has_carbon", "has_hydrogen", "has_metal")
 
 
 def _input_id(obj, index: int) -> str:
@@ -191,9 +198,13 @@ def check_structures(
 
 
 def is_valid(result: dict) -> bool | None:
-    """Composite generated-MOF validity used by batch summaries.
+    """ADiT / Mofasa "all 15 criteria passed" validity (see PROBLEM/PRESENCE_FLAGS).
 
-    ``None`` means the structure failed before it could be scored.
+    Returns ``None`` when the structure errored before scoring. In ADiT/Mofasa
+    terms an errored structure is invalid but still counts in the denominator --
+    that is exactly ``valid_rate_incl_errors`` in ``summarize_results`` (``None``
+    is not counted as valid, denominator is all structures). ``valid_rate``
+    excludes errors.
     """
     if result.get("error"):
         return None

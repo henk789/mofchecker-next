@@ -111,21 +111,21 @@ fn node_degrees(n_atoms: usize, edges: Vec<(usize, usize)>) -> PyResult<Vec<usiz
 }
 
 #[pyfunction]
+#[pyo3(signature = (n_atoms, edges, length_bound, max_cycles=0))]
 fn bounded_simple_cycles_undirected(
     n_atoms: usize,
     edges: Vec<(usize, usize)>,
     length_bound: usize,
+    max_cycles: usize,
 ) -> PyResult<Vec<Vec<usize>>> {
     for &(a, b) in &edges {
         if a >= n_atoms || b >= n_atoms {
             return Err(PyValueError::new_err("edge endpoint out of bounds"));
         }
     }
-    Ok(graph::bounded_simple_cycles_undirected(
-        n_atoms,
-        &edges,
-        length_bound,
-    ))
+    graph::bounded_simple_cycles_undirected(n_atoms, &edges, length_bound, max_cycles).ok_or_else(
+        || PyValueError::new_err(format!("cycle count exceeded max_cycles={max_cycles}")),
+    )
 }
 
 #[pyfunction]

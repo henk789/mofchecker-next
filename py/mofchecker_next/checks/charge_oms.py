@@ -114,6 +114,43 @@ def _indices(structure, symbol: str) -> list[int]:
     return [i for i, site in enumerate(structure) if str(site.specie) == symbol]
 
 
+# Real MOF linker sets have at most a few thousand nonmetal cycles <=16. A graph
+# that produces more than this is degenerate (e.g. overlapping atoms -> a dense
+# blob with exponentially many short cycles). Capping the count bounds memory to
+# ~max_cycles * ~150 B (here single-digit MB) instead of growing unbounded and
+# OOM-killing the process; exceeding it raises, and the dependent ring/charge
+# descriptors are recorded as errors (the structure is pathological, so they are
+# meaningless). The cap is deliberately conservative: validation on 11k real
+# QMOF CIFs has zero hits.
+MAX_NONMETAL_CYCLES = 50_000
+MAX_NONMETAL_CIRCUIT_RANK = 128
+
+
+def _circuit_rank(edges: set[tuple[int, int]]) -> int:
+    nodes = {i for e in edges for i in e}
+    if not nodes:
+        return 0
+    adj = {i: [] for i in nodes}
+    for u, v in edges:
+        adj[u].append(v)
+        adj[v].append(u)
+    seen: set[int] = set()
+    components = 0
+    for node in nodes:
+        if node in seen:
+            continue
+        components += 1
+        stack = [node]
+        seen.add(node)
+        while stack:
+            x = stack.pop()
+            for y in adj[x]:
+                if y not in seen:
+                    seen.add(y)
+                    stack.append(y)
+    return len(edges) - len(nodes) + components
+
+
 def _clean_cycles(graph) -> list[list[int]]:
     from mofchecker_next._rust import bounded_simple_cycles_undirected
 
@@ -125,7 +162,14 @@ def _clean_cycles(graph) -> list[list[int]]:
         for u, v in graph.graph.edges()
         if u != v and nonmetal[u] and nonmetal[v]
     }
-    return bounded_simple_cycles_undirected(len(graph.structure), sorted(edges), 16)
+    rank = _circuit_rank(edges)
+    if rank > MAX_NONMETAL_CIRCUIT_RANK:
+        raise ValueError(
+            f"nonmetal circuit rank {rank} exceeds max={MAX_NONMETAL_CIRCUIT_RANK}"
+        )
+    return bounded_simple_cycles_undirected(
+        len(graph.structure), sorted(edges), 16, MAX_NONMETAL_CYCLES
+    )
 
 
 def _nonmetal_cycles_by_node(structure, cycles, length: int) -> list[list[list[int]]]:
