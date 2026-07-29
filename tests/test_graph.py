@@ -175,3 +175,16 @@ def test_is_3d_connected_graph_from_structure_returns_bool():
 
     structure = Structure(Lattice.cubic(10.0), ["Br"], [[0, 0, 0]])
     assert is_3d_connected_graph_from_structure(structure) is False
+
+
+def test_connected_site_counts_counts_parallel_periodic_edges():
+    import networkx as nx
+
+    from mofchecker_next.checks.graph import connected_site_counts
+
+    multigraph = nx.MultiDiGraph()
+    multigraph.add_edge(0, 1, to_jimage=(0, 0, 0))
+    multigraph.add_edge(0, 1, to_jimage=(1, 0, 0))
+    multigraph.add_edge(1, 2, to_jimage=(0, 0, 0))
+    graph = SimpleNamespace(structure=[0, 1, 2], graph=multigraph)
+    assert connected_site_counts(graph) == [2, 3, 1]

@@ -49,10 +49,13 @@ def compute_charges(
     recip_cells: int = DEFAULT_RECIP_CELLS,
     charge_precision: int = DEFAULT_CHARGE_PRECISION,
     total_charge: float = 0.0,
+    reference_cif_labels: bool = False,
 ) -> np.ndarray:
     """Return EQeq partial charges (one per site) for a pymatgen Structure.
 
     Faithful to EQeq's periodic ``ewald`` method with its default parameters.
+    ``reference_cif_labels`` additionally reproduces MOFChecker's CIF round-trip,
+    where EQeq mis-parses one-letter element labels (see ``parameters_for``).
     """
     from mofchecker_next._rust import eqeq_charges
 
@@ -63,7 +66,7 @@ def compute_charges(
     hardness: list[float] = []
     for site in structure:
         params: AtomParameters = parameters_for(
-            str(site.specie.symbol), h_electron_affinity
+            str(site.specie.symbol), h_electron_affinity, reference_cif_labels
         )
         electronegativity.append(params.electronegativity)
         hardness.append(params.hardness)

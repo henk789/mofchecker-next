@@ -89,8 +89,23 @@ def _charge_centers() -> dict[str, int]:
 def parameters_for(
     symbol: str,
     h_electron_affinity: float = DEFAULT_H_ELECTRON_AFFINITY,
+    reference_cif_labels: bool = False,
 ) -> AtomParameters:
-    """Electronegativity X and hardness J for an element, per EQeq's formulas."""
+    """Electronegativity X and hardness J for an element, per EQeq's formulas.
+
+    ``reference_cif_labels`` reproduces how MOFChecker actually calls EQeq: it
+    writes a pymatgen CIF whose label column is ``<symbol><index>`` and EQeq's
+    parser keys its element table on the first two characters of that label.
+    Two-letter symbols match (``Ag0`` -> ``Ag``); one-letter symbols become
+    ``C1``/``O2``/``U0``, miss the table, and fall back to element index 0 --
+    hydrogen's ionization row *without* hydrogen's ``hI0`` special case, because
+    EQeq only applies that when the parsed label is exactly ``"H "``. Elements
+    outside EQeq's table (Th, U, ...) take the same fallback instead of raising.
+    """
+    if reference_cif_labels:
+        z = _ELEMENT_INDEX[symbol] if len(symbol) == 2 and symbol in _ELEMENT_INDEX else 0
+        return _from_ionization_table(z, _ELEMENT_ORDER[z])
+
     if symbol == "H":
         # X = 0.5 * (hI1 + hI0); J = hI1 - hI0
         x = 0.5 * (_HI1 + h_electron_affinity)
@@ -99,7 +114,10 @@ def parameters_for(
 
     if symbol not in _ELEMENT_INDEX:
         raise ValueError(f"element {symbol!r} is outside EQeq's parameter table")
-    z = _ELEMENT_INDEX[symbol]
+    return _from_ionization_table(_ELEMENT_INDEX[symbol], symbol)
+
+
+def _from_ionization_table(z: int, symbol: str) -> AtomParameters:
     ip = _ionization_table()[z]
     cc = _charge_centers().get(symbol, 0)
     if cc + 1 >= len(ip):

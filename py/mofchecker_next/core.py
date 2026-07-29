@@ -22,12 +22,18 @@ from mofchecker_next.checks import charge_oms as _co
 from mofchecker_next.checks import composition as _comp
 from mofchecker_next.checks import geometry as _geo
 from mofchecker_next.checks import graph as _g
+from mofchecker_next.profiles import DEFAULT_MODE, MODES, resolve_profile
 
 VDW_H_RADIUS = 1.1
 COVALENT_MEDIAN = 1.49
+_UNSET = object()
 
 
-def _structure_from_file(path):
+class InputValidationError(ValueError):
+    """Corrected-mode input violates the documented trust-boundary contract."""
+
+
+def _structure_from_file(path, *, corrected: bool = False):
     """``Structure.from_file`` with pymatgen's benign CIF-rounding notice muted.
 
     pymatgen's CifParser warns whenever it snaps near-integer fractional
@@ -35,6 +41,18 @@ def _structure_from_file(path):
     for the diagnostics. Scoped by message so genuine parse warnings still show.
     """
     import warnings
+
+    if corrected:
+        from pymatgen.io.cif import CifParser
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=r".*Issues encountered while parsing CIF.*")
+            structures = CifParser(
+                str(path), site_tolerance=0.0, frac_tolerance=0.0, check_cif=True,
+            ).parse_structures(primitive=False, check_occu=True, on_error="raise")
+        if len(structures) != 1:
+            raise InputValidationError(f"expected one CIF structure, parsed {len(structures)}")
+        return structures[0]
 
     from pymatgen.core import Structure
 
@@ -47,14 +65,14 @@ def _structure_from_file(path):
         return Structure.from_file(str(path))
 
 
-def normalize_structure(obj):
+def normalize_structure(obj, *, corrected: bool = False):
     """Coerce a pymatgen Structure, ASE Atoms, or CIF path into a Structure."""
     from pymatgen.core import IStructure, Structure
 
     if isinstance(obj, (Structure, IStructure)):
         return obj
     if isinstance(obj, (str, Path)):
-        return _structure_from_file(obj)
+        return _structure_from_file(obj, corrected=corrected)
     if hasattr(obj, "get_chemical_symbols") and hasattr(obj, "get_positions"):
         from pymatgen.io.ase import AseAtomsAdaptor
 
@@ -63,6 +81,34 @@ def normalize_structure(obj):
         f"Unsupported structure input {type(obj)!r}; expected pymatgen Structure, "
         "ASE Atoms, or a CIF path."
     )
+
+
+def validate_corrected_structure(structure) -> None:
+    """Reject inputs for which corrected diagnostics would fabricate certainty."""
+    import numpy as np
+
+    lattice = np.asarray(structure.lattice.matrix, dtype=float)
+    frac = np.asarray(structure.frac_coords, dtype=float)
+    cart = np.asarray(structure.cart_coords, dtype=float)
+    if len(structure) == 0:
+        raise InputValidationError("structure contains no sites")
+    if lattice.shape != (3, 3) or not np.isfinite(lattice).all():
+        raise InputValidationError("lattice contains non-finite values")
+    determinant = float(np.linalg.det(lattice))
+    if not np.isfinite(determinant) or abs(determinant) <= 1e-8:
+        raise InputValidationError("lattice is singular or has negligible volume")
+    if not np.isfinite(frac).all() or not np.isfinite(cart).all():
+        raise InputValidationError("site coordinates contain NaN or infinity")
+    for index, site in enumerate(structure):
+        if not site.is_ordered or len(site.species) != 1 or abs(float(site.species.num_atoms) - 1.0) > 1e-8:
+            raise InputValidationError(f"site {index} has disorder or partial occupancy")
+        try:
+            atomic_number = int(site.specie.Z)
+        except Exception as exc:
+            raise InputValidationError(f"site {index} is not a supported chemical element") from exc
+        if not 1 <= atomic_number <= 118:
+            raise InputValidationError(f"site {index} has invalid atomic number {atomic_number}")
+
 
 # Descriptors returned by get_mof_descriptors() by default: metadata, symmetry,
 # graph hashes, and every implemented diagnostic. Excludes the healing
@@ -81,6 +127,22 @@ DEFAULT_DESCRIPTORS = (
     "has_high_charges", "has_oms", "is_porous",
 )
 
+NEXT_DEFAULT_DESCRIPTORS = DEFAULT_DESCRIPTORS + (
+    "max_abs_eqeq_charge", "eqeq_charge_sum", "eqeq_expected_total_charge",
+    "eqeq_charge_residual", "eqeq_charge_threshold",
+)
+
+LEGACY_DEFAULT_DESCRIPTORS = (
+    "name", "graph_hash", "undecorated_graph_hash", "decorated_scaffold_hash",
+    "undecorated_scaffold_hash", "symmetry_hash", "formula", "path", "density",
+    "has_carbon", "has_hydrogen", "has_atomic_overlaps", "has_overcoordinated_c",
+    "has_overcoordinated_n", "has_overcoordinated_h", "has_undercoordinated_c",
+    "has_undercoordinated_n", "has_undercoordinated_rare_earth", "has_metal",
+    "has_lone_molecule", "has_high_charges", "is_porous",
+    "has_suspicicious_terminal_oxo", "has_undercoordinated_alkali_alkaline",
+    "has_geometrically_exposed_metal", "has_3d_connected_graph",
+)
+
 
 class MOFChecker:
     """MOFChecker-compatible diagnostics for a single structure."""
@@ -95,6 +157,10 @@ class MOFChecker:
         clash_scale: float = 1.0,
         name=None,
         path=None,
+        mode: str = DEFAULT_MODE,
+        symprec=_UNSET,
+        angle_tolerance=_UNSET,
+        primitive=_UNSET,
     ):
         """``distance_scale`` multiplies the bond-distance cutoffs used to build
         the neighbor graph (affects undercoordination, lone-molecule,
@@ -102,7 +168,39 @@ class MOFChecker:
         covalent-radius cutoffs used for atomic-overlap detection (affects
         ``has_atomic_overlaps``). Both default to ``1.0``, which reproduces
         MOFChecker exactly."""
+        profile = resolve_profile(mode)
+        if profile.legacy_input:
+            from pymatgen.core import Structure
+            from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+
+            symprec = 0.5 if symprec is _UNSET else symprec
+            angle_tolerance = 5 if angle_tolerance is _UNSET else angle_tolerance
+            primitive = True if primitive is _UNSET else primitive
+            if symprec is not None or angle_tolerance is not None:
+                try:
+                    structure = SpacegroupAnalyzer(
+                        structure, symprec=symprec, angle_tolerance=angle_tolerance
+                    ).get_symmetrized_structure()
+                except TypeError:
+                    pass
+            if primitive:
+                structure = structure.get_primitive_structure()
+            if isinstance(structure, Structure):
+                from pymatgen.core import IStructure
+
+                structure = IStructure.from_sites(structure)
+
+        if profile.corrected_input:
+            validate_corrected_structure(structure)
+        if not isinstance(method, str) or not method:
+            raise ValueError("method must be a non-empty string")
+        for label, value in (("distance_scale", distance_scale), ("clash_scale", clash_scale)):
+            if not isinstance(value, (int, float)) or not 0 < float(value) < float("inf"):
+                raise ValueError(f"{label} must be finite and positive")
+
         self.structure = structure
+        self.mode = mode
+        self.profile = profile
         self.metals = _co.METALS if metals is None else frozenset(str(m) for m in metals)
         self._method = method
         self._distance_scale = distance_scale
@@ -113,15 +211,31 @@ class MOFChecker:
     # -- constructors ------------------------------------------------------
     @classmethod
     def from_cif(cls, path, **kwargs):
-        """Build from a CIF path (loaded with pymatgen ``Structure.from_file``)."""
+        """Build from a CIF path using the selected reference mode's defaults."""
         path = str(path)
-        return cls(_structure_from_file(path), name=Path(path).stem, path=str(Path(path).resolve()), **kwargs)
+        if resolve_profile(kwargs.get("mode", DEFAULT_MODE)).legacy_input:
+            import warnings
+            from pymatgen.io.cif import CifParser
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                structure = CifParser(path).get_structures()[0]
+            kwargs.setdefault("symprec", 0.5)
+            kwargs.setdefault("angle_tolerance", 5)
+            kwargs.setdefault("primitive", False)
+        else:
+            structure = _structure_from_file(path, corrected=resolve_profile(kwargs.get("mode", DEFAULT_MODE)).corrected_input)
+        return cls(structure, name=Path(path).stem, path=str(Path(path).resolve()), **kwargs)
 
     @classmethod
     def from_ase(cls, atoms, **kwargs):
         """Build from an ASE ``Atoms`` object."""
         from pymatgen.io.ase import AseAtomsAdaptor
 
+        if resolve_profile(kwargs.get("mode", DEFAULT_MODE)).legacy_input:
+            kwargs.setdefault("symprec", 0.5)
+            kwargs.setdefault("angle_tolerance", 5)
+            kwargs.setdefault("primitive", False)
         return cls(AseAtomsAdaptor.get_structure(atoms), **kwargs)
 
     @classmethod
@@ -132,7 +246,14 @@ class MOFChecker:
     @cached_property
     def graph(self):
         """The pymatgen StructureGraph (built once, reused by all checks)."""
-        return _g.build_structure_graph(self.structure, self._method, distance_scale=self._distance_scale)
+        structure = self.structure
+        if self.profile.corrected_input:
+            from pymatgen.core import Structure
+
+            # Canonical computational view: preserve cell/index order while making
+            # graph construction invariant to integer translations of sites.
+            structure = Structure.from_sites(structure, to_unit_cell=True)
+        return _g.build_structure_graph(structure, self._method, distance_scale=self._distance_scale)
 
     # -- metadata ----------------------------------------------------------
     @property
@@ -234,7 +355,7 @@ class MOFChecker:
 
     # -- atomic overlaps ---------------------------------------------------
     @cached_property
-    def _overlap_indices(self) -> list[int]:
+    def _overlap_diagnostics(self):
         from pymatgen.core import Element
 
         atomic_numbers = [int(site.specie.Z) for site in self.structure]
@@ -243,12 +364,19 @@ class MOFChecker:
             for site in self.structure
         }
         matrix = _geo.build_overlap_cutoff_matrix(atomic_numbers, radii_by_z, default_radius=COVALENT_MEDIAN)
-        contacts = _geo.check_atomic_overlaps(self.structure, matrix, scale=self._clash_scale)
+        return _geo.check_atomic_overlaps(self.structure, matrix, scale=self._clash_scale)
+
+    @cached_property
+    def _overlap_indices(self) -> list[int]:
         idx = set()
-        for d in contacts:
+        for d in self._overlap_diagnostics:
             for atom in d.atoms:
                 idx.add(int(atom.index))
         return sorted(idx)
+
+    @property
+    def overlap_diagnostics(self):
+        return self._overlap_diagnostics
 
     def get_overlapping_indices(self) -> list[int]:
         return self._overlap_indices
@@ -260,7 +388,9 @@ class MOFChecker:
     # -- coordination ------------------------------------------------------
     @cached_property
     def overvalent_c_indices(self) -> list[int]:
-        return _g.overcoordinated_carbon_indices_from_structure(self.structure, self.metals, graph=self.graph)
+        return _g.overcoordinated_carbon_indices_from_structure(
+            self.structure, self.metals, graph=self.graph, exclude_boron=self.mode != "0.9.6"
+        )
 
     @cached_property
     def overcoordinated_n_indices(self) -> list[int]:
@@ -272,17 +402,30 @@ class MOFChecker:
 
     @cached_property
     def undercoordinated_c_indices(self) -> list[int]:
+        if self.mode == "0.9.6":
+            return _g.undercoordinated_carbon_indices_v096_from_structure(
+                self.structure, graph=self.graph
+            )
         return _g.undercoordinated_carbon_indices_from_structure(
-            self.structure, self.metals, _co.COVALENT_RADII, graph=self.graph
+            self.structure, self.metals, _co.COVALENT_RADII, graph=self.graph,
+            use_connected_site_vectors=self.profile.corrected_carbon_images,
         )
 
     @cached_property
     def undercoordinated_n_indices(self) -> list[int]:
+        if self.mode == "0.9.6":
+            return _g.undercoordinated_nitrogen_indices_v096_from_structure(
+                self.structure, graph=self.graph
+            )
         return _g.undercoordinated_nitrogen_indices_from_structure(self.structure, self.metals, graph=self.graph)
 
     @cached_property
     def undercoordinated_rare_earth_indices(self) -> list[int]:
-        return _g.undercoordinated_rare_earth_indices_from_structure(self.structure, graph=self.graph)
+        # 0.9.6 used pymatgen's is_rare_earth_metal (no Sc/Y); 2.0 switched to
+        # is_rare_earth, which also counts Sc and Y.
+        return _g.undercoordinated_rare_earth_indices_from_structure(
+            self.structure, graph=self.graph, include_sc_y=self.mode != "0.9.6"
+        )
 
     @cached_property
     def _undercoordinated_alkali_alkaline_indices(self) -> list[int]:
@@ -320,11 +463,15 @@ class MOFChecker:
     @cached_property
     def floating_solvent_indices(self) -> list:
         """All finite detached components (old lone_molecule_indices behavior)."""
+        if self.mode == "0.9.6":
+            return _g.floating_solvent_indices_v096_from_structure(self.structure, graph=self.graph)
         return _g.floating_solvent_indices_from_structure(self.structure, graph=self.graph)
 
     @property
     def stray_atom_indices(self) -> list:
         """Detached finite components containing exactly one atom."""
+        if self.mode == "0.9.6":
+            return []
         return [idx for idx in self.floating_solvent_indices if len(idx) == 1]
 
     @property
@@ -333,7 +480,9 @@ class MOFChecker:
 
     @property
     def lone_molecule_indices(self) -> list:
-        """Detached finite components containing two or more atoms."""
+        """Detached finite components; 0.9.6 includes single stray atoms here."""
+        if self.mode == "0.9.6":
+            return self.floating_solvent_indices
         return [idx for idx in self.floating_solvent_indices if len(idx) >= 2]
 
     @property
@@ -387,10 +536,58 @@ class MOFChecker:
     def negative_charge_from_linkers(self) -> int:
         return len(_co.negative_charge_indices(self.structure, self.graph, cycles=self._clean_cycles))
 
+    @cached_property
+    def eqeq_charges(self) -> tuple[float, ...]:
+        """JSON-safe true-element Rust EQeq charges for the corrected profile."""
+        if self.profile.total_charge is None:
+            raise AttributeError("this profile does not declare an EQeq total charge")
+        from mofchecker_next.eqeq import compute_charges
+
+        charges = tuple(float(q) for q in compute_charges(
+            self.structure,
+            total_charge=self.profile.total_charge,
+            reference_cif_labels=False,
+        ))
+        residual = abs(sum(charges) - self.profile.total_charge)
+        if residual > self.profile.eqeq_charge_sum_tolerance:
+            raise ValueError(
+                f"EQeq charge sum {sum(charges):.12g} differs from requested "
+                f"{self.profile.total_charge:.12g} by more than "
+                f"{self.profile.eqeq_charge_sum_tolerance:g}"
+            )
+        return charges
+
+    @property
+    def max_abs_eqeq_charge(self) -> float:
+        return max((abs(q) for q in self.eqeq_charges), default=0.0)
+
+    @property
+    def eqeq_charge_sum(self) -> float:
+        return sum(self.eqeq_charges)
+
+    @property
+    def eqeq_expected_total_charge(self) -> float:
+        if self.profile.total_charge is None:
+            raise AttributeError("this profile does not declare an EQeq total charge")
+        return self.profile.total_charge
+
+    @property
+    def eqeq_charge_residual(self) -> float:
+        return abs(sum(self.eqeq_charges) - self.eqeq_expected_total_charge)
+
+    @property
+    def eqeq_charge_threshold(self) -> float:
+        return self.profile.eqeq_threshold
+
     @property
     def has_high_charges(self) -> bool:
         from mofchecker_next.eqeq import has_high_charges
 
+        if self.mode == "0.9.6":
+            # 0.9.6 threshold, and EQeq fed through MOFChecker's CIF round-trip.
+            return has_high_charges(self.structure, threshold=3.0, reference_cif_labels=True)
+        if self.profile.corrected_input:
+            return self.max_abs_eqeq_charge > self.eqeq_charge_threshold
         return has_high_charges(self.structure)
 
     # -- out of scope ------------------------------------------------------
@@ -414,11 +611,26 @@ class MOFChecker:
         )
 
     # -- descriptor dict ---------------------------------------------------
+    @property
+    def decorated_scaffold_hash(self) -> str:
+        """0.9.6 name for ``scaffold_hash``."""
+        return self.scaffold_hash
+
+    @property
+    def has_suspicicious_terminal_oxo(self) -> bool:
+        """0.9.6's misspelled public property."""
+        return self.has_suspicious_terminal_oxo
+
     def get_mof_descriptors(self, descriptors: Sequence[str] | None = None) -> "OrderedDict[str, object]":
         """Return an ordered dict of descriptor name -> value.
 
         Defaults to ``DEFAULT_DESCRIPTORS`` (metadata, symmetry, hashes, and all
         implemented diagnostics). Pass an explicit list to select a subset.
         """
-        names = list(DEFAULT_DESCRIPTORS) if descriptors is None else list(descriptors)
+        defaults = {
+            "legacy": LEGACY_DEFAULT_DESCRIPTORS,
+            "modern": DEFAULT_DESCRIPTORS,
+            "next": NEXT_DEFAULT_DESCRIPTORS,
+        }[self.profile.descriptor_set]
+        names = list(defaults) if descriptors is None else list(descriptors)
         return OrderedDict((name, getattr(self, name)) for name in names)

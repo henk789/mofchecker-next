@@ -2,6 +2,38 @@
 
 This inventory tracks checker diagnostics targeted for parity with MOFChecker 2.0. It excludes healing/correction outputs.
 
+## Legacy 0.9.6 mode
+
+`mode="0.9.6"` switches the validity-relevant differences as a coherent profile:
+legacy CIF/symmetry/primitive defaults, undercoordinated C and CN1/CN2/CN3 N
+heuristics, no boron exemption for overcoordinated C, EqEq threshold 3, and the
+unsplit supercell-based floating-component flag. The public names
+`decorated_scaffold_hash` and `has_suspicicious_terminal_oxo` are also restored
+when `get_mof_descriptors()` uses its mode-specific defaults.
+
+Parity target: the 15 Mofasa/ADiT composite descriptors plus
+`has_3d_connected_graph` from pinned `mofchecker==0.9.6`; hashes are not parity
+targets. Verified on all 20,374 QMOF CIFs: 0 disagreements over 325,984
+per-descriptor comparisons, identical composite validity, zero errors.
+
+Three emulation defects had to be fixed to get there, and the first two also
+apply to explicit 2.0 mode:
+
+- Coordination number must count parallel periodic-image edges
+  (`connected_site_counts`), matching `structuregraph_helpers.get_cn`; unique
+  neighbor degree over-flagged undercoordinated alkali/alkaline and rare-earth
+  sites.
+- Terminal-oxo detection uses that same CN.
+- Legacy rare-earth used pymatgen's deprecated `is_rare_earth_metal`, which
+  excludes Sc and Y, unlike the `is_rare_earth` that 2.0 adopted.
+
+Legacy charges additionally emulate EQeq's CIF-label element parsing
+(`reference_cif_labels=True`): the reference feeds EQeq a pymatgen CIF whose
+label column is `<symbol><index>`, so one-letter elements miss EQeq's table and
+take element index 0 (hydrogen's ionization row, without hydrogen's `hI0`
+special case). This reproduces reference charges bit-exactly, including elements
+outside EQeq's table.
+
 ## Implemented / Scaffolded
 
 | Diagnostic | Reference API | Reference Source | Reference Output | Current Status | Parity Target |

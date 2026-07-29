@@ -5,6 +5,7 @@ import math
 import numpy as np
 from element_coder.encode import encode_many
 from libconeangle import cone_angle
+from pymatgen.util.coord import get_angle
 
 from mofchecker_next.diagnostics import AtomRef, Diagnostic
 
@@ -92,6 +93,21 @@ def build_structure_graph(structure, method: str = "vesta", distance_scale: floa
         return StructureGraph.with_local_env_strategy(structure, scaled)
 
 
+def connected_site_counts(structure_graph) -> list[int]:
+    """MOFChecker's coordination number: ``len(get_connected_sites(i))``.
+
+    This counts parallel edges to the same neighbor in different periodic images
+    separately, unlike unique-neighbor graph degree. The reference's
+    ``structuregraph_helpers.analysis.get_cn`` uses exactly this count, so every
+    CN threshold check must too.
+    """
+    counts = [0] * len(structure_graph.structure)
+    for u, v, _ in structure_graph.graph.edges(data=True):
+        counts[int(u)] += 1
+        counts[int(v)] += 1
+    return counts
+
+
 def _resolve_graph(structure, method, graph):
     """Return a caller-supplied graph if given, else build one.
 
@@ -132,6 +148,16 @@ def structure_graph_components_as_molecules(structure_graph):
 def floating_solvent_indices_from_structure(structure, method: str = "vesta", graph=None):
     """Return MOFChecker-compatible floating-solvent index lists."""
     return structure_graph_components_as_molecules(_resolve_graph(structure, method, graph))
+
+
+def floating_solvent_indices_v096_from_structure(structure, method: str = "vesta", graph=None):
+    """Run 0.9.6's exact supercell-based floating-component heuristic."""
+    import networkx as nx
+    from structuregraph_helpers.subgraph import get_subgraphs_as_molecules
+
+    graph = _resolve_graph(structure, method, graph)
+    nx.set_node_attributes(graph.graph, dict(enumerate(range(len(graph)))), "idx")
+    return get_subgraphs_as_molecules(graph, return_unique=False)[2]
 
 
 def is_3d_connected_graph_from_structure(structure, method: str = "vesta", graph=None) -> bool:
@@ -198,16 +224,18 @@ def overcoordinated_indices_by_degree(
     target_atomic_number: int,
     max_degree: int,
     excluded_neighbor_atomic_numbers=(),
+    degrees=None,
 ) -> list[int]:
     """Flag target atoms with graph degree above a threshold.
 
     Neighbor exclusions are caller-supplied so Rust does not infer metals,
-    boron chemistry, or bond perception rules.
+    boron chemistry, or bond perception rules. ``degrees`` overrides the
+    unique-neighbor degree, e.g. with MOFChecker's parallel-edge CN.
     """
     atomic_numbers = [int(number) for number in atomic_numbers]
     edges = [(int(a), int(b)) for a, b in edges]
     excluded = {int(number) for number in excluded_neighbor_atomic_numbers}
-    degrees = node_degrees_from_edges(len(atomic_numbers), edges)
+    degrees = node_degrees_from_edges(len(atomic_numbers), edges) if degrees is None else degrees
     neighbors = [set() for _ in atomic_numbers]
     for a, b in edges:
         if a == b:
@@ -232,15 +260,21 @@ def false_oxo_indices_by_graph(
     edges,
     metal_symbols,
     no_terminal_oxo_symbols=NO_TERMINAL_OXO_SYMBOLS,
+    degrees=None,
 ) -> list[int]:
     """Return metals with a disallowed terminal O neighbor on an explicit graph."""
     atomic_symbols = [str(symbol) for symbol in atomic_symbols]
     metal_symbols = {str(symbol) for symbol in metal_symbols}
     no_terminal_oxo_symbols = {str(symbol) for symbol in no_terminal_oxo_symbols}
     neighbors = [set() for _ in atomic_symbols]
+    # "Terminal" is CN == 1 in MOFChecker's parallel-edge sense, so count edges.
+    counts = [0] * len(atomic_symbols) if degrees is None else list(degrees)
     for a, b in edges:
         a = int(a)
         b = int(b)
+        if degrees is None:
+            counts[a] += 1
+            counts[b] += 1
         if a == b:
             continue
         neighbors[a].add(b)
@@ -251,7 +285,7 @@ def false_oxo_indices_by_graph(
         if symbol not in metal_symbols or symbol not in no_terminal_oxo_symbols:
             continue
         for neighbor_index in neighbors[site_index]:
-            if atomic_symbols[neighbor_index] == "O" and len(neighbors[neighbor_index]) == 1:
+            if atomic_symbols[neighbor_index] == "O" and counts[neighbor_index] == 1:
                 flagged.append(site_index)
     return flagged
 
@@ -375,13 +409,21 @@ def check_nonperiodic_components(n_atoms: int, edges, edge_images=None) -> list[
     return diagnostics
 
 
-def overcoordinated_carbon_indices_from_structure(structure, metal_symbols, method: str = "vesta", graph=None):
+def overcoordinated_carbon_indices_from_structure(
+    structure,
+    metal_symbols,
+    method: str = "vesta",
+    graph=None,
+    exclude_boron: bool = True,
+):
     graph = _resolve_graph(structure, method, graph)
     edges, _ = structure_graph_edges_and_images(graph)
     atomic_numbers = [int(site.specie.Z) for site in graph.structure]
-    excluded = {5}
+    excluded = {5} if exclude_boron else set()
     excluded.update(int(site.specie.Z) for site in graph.structure if str(site.specie) in set(metal_symbols))
-    return overcoordinated_indices_by_degree(atomic_numbers, edges, 6, 4, excluded)
+    return overcoordinated_indices_by_degree(
+        atomic_numbers, edges, 6, 4, excluded, degrees=connected_site_counts(graph)
+    )
 
 
 def overcoordinated_nitrogen_indices_from_structure(structure, metal_symbols, method: str = "vesta", graph=None):
@@ -389,7 +431,9 @@ def overcoordinated_nitrogen_indices_from_structure(structure, metal_symbols, me
     edges, _ = structure_graph_edges_and_images(graph)
     atomic_numbers = [int(site.specie.Z) for site in graph.structure]
     excluded = {int(site.specie.Z) for site in graph.structure if str(site.specie) in set(metal_symbols)}
-    return overcoordinated_indices_by_degree(atomic_numbers, edges, 7, 4, excluded)
+    return overcoordinated_indices_by_degree(
+        atomic_numbers, edges, 7, 4, excluded, degrees=connected_site_counts(graph)
+    )
 
 
 def false_oxo_indices_from_structure(
@@ -406,7 +450,10 @@ def false_oxo_indices_from_structure(
 
     atomic_symbols = [str(site.specie) for site in structure]
     edges, _ = structure_graph_edges_and_images(graph)
-    return false_oxo_indices_by_graph(atomic_symbols, edges, metal_symbols, no_terminal_oxo_symbols)
+    return false_oxo_indices_by_graph(
+        atomic_symbols, edges, metal_symbols, no_terminal_oxo_symbols,
+        degrees=connected_site_counts(graph),
+    )
 
 
 def geometrically_exposed_metal_indices_from_structure(
@@ -426,6 +473,7 @@ def undercoordinated_carbon_indices_from_structure(
     method: str = "vesta",
     tolerance: float = 165.0,
     graph=None,
+    use_connected_site_vectors: bool = False,
 ) -> list[int]:
     """Return undercoordinated carbon indices following MOFChecker 2.0 index logic.
 
@@ -453,11 +501,16 @@ def undercoordinated_carbon_indices_from_structure(
         cn = len(neighbors)
         if cn != 2:
             continue
-        a = structure.get_distance(neighbors[0].index, site_index)
-        b = structure.get_distance(neighbors[1].index, site_index)
-        c = structure.get_distance(neighbors[0].index, neighbors[1].index)
-        cos_angle = (a * a + b * b - c * c) / (2 * a * b)
-        angle = math.degrees(math.acos(round(cos_angle, 6)))
+        if use_connected_site_vectors:
+            center = structure[site_index].coords
+            angle = get_angle(neighbors[0].site.coords - center, neighbors[1].site.coords - center)
+        else:
+            # 2.0 parity: reconstruct from independently minimum-imaged distances.
+            a = structure.get_distance(neighbors[0].index, site_index)
+            b = structure.get_distance(neighbors[1].index, site_index)
+            c = structure.get_distance(neighbors[0].index, neighbors[1].index)
+            cos_angle = (a * a + b * b - c * c) / (2 * a * b)
+            angle = math.degrees(math.acos(round(cos_angle, 6)))
         any_metal_neighbor = any(str(neighbor.site.specie) in metal_symbols for neighbor in neighbors)
         if any_metal_neighbor:
             if angle < tolerance - 15:
@@ -502,17 +555,118 @@ def undercoordinated_nitrogen_indices_from_structure(
     return flagged
 
 
-def undercoordinated_rare_earth_indices_from_structure(structure, method: str = "vesta", graph=None) -> list[int]:
+def undercoordinated_carbon_indices_v096_from_structure(
+    structure,
+    method: str = "vesta",
+    tolerance: float = 10.0,
+    graph=None,
+) -> list[int]:
+    """MOFChecker 0.9.6 carbon rule: all CN1 and non-linear CN2 sites."""
     graph = _resolve_graph(structure, method, graph)
-    degrees = node_degrees_from_edges(len(structure), structure_graph_edges_and_images(graph)[0])
-    return [index for index, site in enumerate(structure) if site.specie.is_rare_earth and degrees[index] < 4]
+    flagged = []
+    for site_index, site in enumerate(structure):
+        if str(site.specie) != "C":
+            continue
+        neighbors = graph.get_connected_sites(site_index)
+        if len(neighbors) == 1:
+            flagged.append(site_index)
+        elif len(neighbors) == 2:
+            angle = structure.get_angle(site_index, neighbors[0].index, neighbors[1].index)
+            angle = max(angle, abs(180.0 - angle))
+            if abs(180.0 - angle) > tolerance:
+                flagged.append(site_index)
+    return flagged
+
+
+def _legacy_nitrogen_cn2(structure, site_index, neighbors, connected_a, connected_b, tolerance):
+    site = structure[site_index]
+    angle = get_angle(site.coords - neighbors[1].site.coords, site.coords - neighbors[0].site.coords)
+    if abs(180.0 - angle) < tolerance or abs(angle) < tolerance:
+        return False
+    bond_lengths = np.array([
+        structure.get_distance(site_index, neighbors[0].index),
+        structure.get_distance(site_index, neighbors[1].index),
+    ])
+    dihedrals = [
+        structure.get_dihedral(neighbors[0].index, site_index, neighbors[1].index, connected_a[0].index),
+        structure.get_dihedral(neighbors[0].index, site_index, neighbors[1].index, connected_b[0].index),
+        structure.get_dihedral(connected_b[0].index, neighbors[0].index, site_index, neighbors[1].index),
+        structure.get_dihedral(connected_a[0].index, neighbors[0].index, site_index, neighbors[1].index),
+    ]
+    mean_dihedral = np.min(np.abs(dihedrals))
+    if abs(mean_dihedral - 180.0) < tolerance or abs(mean_dihedral) < tolerance:
+        return not np.all(bond_lengths < 1.4)
+    return False
+
+
+def _legacy_nitrogen_cn3(structure, site_index, neighbors, tolerance):
+    site = structure[site_index]
+    angle = get_angle(site.coords - neighbors[1].site.coords, site.coords - neighbors[0].site.coords)
+    any_metal = any(neighbor.site.specie.is_metal for neighbor in neighbors)
+    num_hydrogen = sum(str(neighbor.site.specie) == "H" for neighbor in neighbors)
+    return angle < 110.0 + tolerance and any_metal and num_hydrogen == 2
+
+
+def undercoordinated_nitrogen_indices_v096_from_structure(
+    structure,
+    method: str = "vesta",
+    tolerance: float = 25.0,
+    graph=None,
+) -> list[int]:
+    """MOFChecker 0.9.6 CN1/CN2/CN3 nitrogen heuristics."""
+    graph = _resolve_graph(structure, method, graph)
+    flagged = []
+    for site_index, site in enumerate(structure):
+        if str(site.specie) != "N":
+            continue
+        neighbors = graph.get_connected_sites(site_index)
+        cn = len(neighbors)
+        if cn == 1:
+            neighbor = neighbors[0]
+            if len(graph.get_connected_sites(neighbor.index)) > 2 and not neighbor.site.specie.is_metal:
+                flagged.append(site_index)
+        elif cn == 2 and _legacy_nitrogen_cn2(
+            structure,
+            site_index,
+            neighbors,
+            graph.get_connected_sites(neighbors[0].index),
+            graph.get_connected_sites(neighbors[1].index),
+            tolerance,
+        ):
+            flagged.append(site_index)
+        elif cn == 3 and _legacy_nitrogen_cn3(structure, site_index, neighbors, tolerance):
+            flagged.append(site_index)
+    return flagged
+
+
+def undercoordinated_rare_earth_indices_from_structure(
+    structure,
+    method: str = "vesta",
+    graph=None,
+    include_sc_y: bool = True,
+) -> list[int]:
+    """Flag rare-earth sites with CN < 4.
+
+    ``include_sc_y`` selects the element set: pymatgen's current ``is_rare_earth``
+    (lanthanoids, actinoids, Sc, Y) as used by MOFChecker 2.0, or the deprecated
+    ``is_rare_earth_metal`` (lanthanoids and actinoids only) that 0.9.6 used.
+    """
+    graph = _resolve_graph(structure, method, graph)
+    counts = connected_site_counts(graph)
+
+    def is_rare_earth(specie) -> bool:
+        if include_sc_y:
+            return bool(specie.is_rare_earth)
+        return bool(specie.is_lanthanoid or specie.is_actinoid)
+
+    return [index for index, site in enumerate(structure) if is_rare_earth(site.specie) and counts[index] < 4]
 
 
 def undercoordinated_alkali_alkaline_indices_from_structure(structure, method: str = "vesta", graph=None) -> list[int]:
     graph = _resolve_graph(structure, method, graph)
-    degrees = node_degrees_from_edges(len(structure), structure_graph_edges_and_images(graph)[0])
+    counts = connected_site_counts(graph)
     return [
         index
         for index, site in enumerate(structure)
-        if (site.specie.is_alkali or site.specie.is_alkaline) and degrees[index] < 4
+        if (site.specie.is_alkali or site.specie.is_alkaline) and counts[index] < 4
     ]

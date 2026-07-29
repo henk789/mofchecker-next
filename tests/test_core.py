@@ -7,10 +7,10 @@ import pytest
 
 pytest.importorskip("pymatgen")
 pytest.importorskip("structuregraph_helpers")
-from pymatgen.core import Lattice, Structure  # noqa: E402
+from pymatgen.core import IStructure, Lattice, Structure  # noqa: E402
 
-from mofchecker_next import MOFChecker  # noqa: E402
-from mofchecker_next.core import DEFAULT_DESCRIPTORS  # noqa: E402
+from mofchecker_next import DEFAULT_MODE, MOFChecker  # noqa: E402
+from mofchecker_next.core import DEFAULT_DESCRIPTORS, LEGACY_DEFAULT_DESCRIPTORS  # noqa: E402
 
 
 def _mof_like():
@@ -21,17 +21,20 @@ def _mof_like():
     return Structure(lattice, species, coords)
 
 
-def test_constructors(tmp_path):
+def test_constructors_default_to_legacy(tmp_path):
     s = _mof_like()
-    assert isinstance(MOFChecker(s).structure, Structure)
+    checker = MOFChecker(s)
+    assert DEFAULT_MODE == checker.mode == "0.9.6"
+    assert isinstance(checker.structure, (Structure, IStructure))
     p = tmp_path / "m.cif"
     s.to(filename=str(p), fmt="cif")
     c = MOFChecker.from_cif(p)
+    assert c.mode == "0.9.6"
     assert c.name == "m" and c.path is not None and len(c.structure) == 6
 
 
 def test_core_diagnostics_and_metadata():
-    c = MOFChecker(_mof_like())
+    c = MOFChecker(_mof_like(), mode="2.0")
     assert c.has_carbon is True and c.has_metal is True
     assert c.metal_number == 1
     assert isinstance(c.has_atomic_overlaps, bool)
@@ -56,7 +59,7 @@ def test_graph_built_once():
 
 
 def test_floating_solvent_split_stray_vs_lone_molecule():
-    c = MOFChecker(_mof_like())
+    c = MOFChecker(_mof_like(), mode="2.0")
     c.__dict__["floating_solvent_indices"] = [[1], [2, 3]]
     assert c.stray_atom_indices == [[1]]
     assert c.lone_molecule_indices == [[2, 3]]
@@ -65,7 +68,9 @@ def test_floating_solvent_split_stray_vs_lone_molecule():
 
 
 def test_get_mof_descriptors_default_and_subset():
-    c = MOFChecker(_mof_like())
+    legacy = MOFChecker(_mof_like()).get_mof_descriptors()
+    assert set(legacy) == set(LEGACY_DEFAULT_DESCRIPTORS)
+    c = MOFChecker(_mof_like(), mode="2.0")
     full = c.get_mof_descriptors()
     assert set(full) == set(DEFAULT_DESCRIPTORS)
     assert full["has_metal"] is True
